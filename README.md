@@ -130,7 +130,8 @@ does it. No neural ReID is added.
 ## Layout
 
 ```
-uav_pipeline/
+uav_pipeline/           ← repo root == the package (git clone produces this folder)
+├── __init__.py         # makes the repo root the importable `uav_pipeline` package
 ├── contracts.py        # Detection / Track / Command / FrameMeta / FollowState / FrameContext
 ├── config.py           # typed config from one YAML
 ├── pipeline.py         # single-frame loop: detect → track → ocr → follow → sinks
@@ -158,10 +159,13 @@ uav_pipeline/
 
 ## Quickstart
 
-> Run from the directory that **contains** `uav_pipeline/` (the repo root).
-> `pip install -r uav_pipeline/requirements.txt` first (at least
-> `numpy`, `opencv-python`, `pyyaml`, `torch`, `torchvision`). The weights ship
-> in `uav_pipeline/weights/`, so no other folders are needed.
+> `git clone` produces a folder named `uav_pipeline/` — that folder **is** the
+> package (the repo is flat: no extra wrapper folder). Run the commands below
+> from that folder's **parent** (the directory you cloned into — *not* from
+> inside `uav_pipeline/`), so that `import uav_pipeline` resolves. Install deps
+> first: `pip install -r uav_pipeline/requirements.txt` (at least `numpy`,
+> `opencv-python`, `pyyaml`, `torch`, `torchvision`). The weights ship in
+> `uav_pipeline/weights/`, so no other folders are needed.
 
 ### 1. Smoke-test the core (no model, no weights — tests Track + Follow)
 
