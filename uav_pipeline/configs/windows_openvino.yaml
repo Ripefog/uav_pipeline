@@ -1,0 +1,62 @@
+# Windows dev preset — OpenVINO on CPU, runs out of the box (no CUDA/Jetson).
+# Use:  python -m uav_pipeline.scripts.run_pipeline -c uav_pipeline/configs/windows_openvino.yaml --source <video_or_image_dir>
+
+source:
+  type: video
+  path: ""            # set via --source, or hardcode a video/image-dir here
+  loop: true
+  fps: 30
+
+detector:
+  backend: openvino
+  device: CPU
+  imgsz: 640
+  conf: 0.25
+  iou: 0.45
+  fp16: false
+  classes_of_interest: []
+  primary:
+    openvino: eval_yolo/weights/best_yolov26n_qat_int8_static.xml
+    names_yaml: eval_yolo/utils/args.yaml
+
+ocr:
+  enabled: false      # flip true after placing eval_ocr weights
+  keras_model: eval_ocr/weights/plate_ocr.keras
+  plate_config: eval_ocr/weights/plate_config.yaml
+  crop_mode: vehicle_lower_third
+  vehicle_classes_for_lower_third: [car, van, truck, bus]
+  every_n_frames: 5
+  vote_window: 5
+
+tracker:
+  high_conf: 0.4
+  low_conf: 0.15
+  iou: 0.3
+  max_age: 50
+  min_hits: 3
+  emat: true
+  same_class_gate: false
+  interpolate_max_gap: 5
+  cmc: {enabled: true, method: affine, downscale: 0.5, n_features: 1000,
+        match_ratio: 0.75, ransac_thresh: 5.0, min_matches: 20}
+
+follow:
+  enabled: true
+  default_policy: highest_score_area
+  preferred_classes: [car, van, truck, bus, pedestrian]
+  target_area_norm: 0.12
+  deadzone_px: 12.0
+  lost_recovery_frames: 15
+  pid:
+    yaw:     {kp: 0.08, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    pitch:   {kp: 0.06, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    forward: {kp: 0.40, ki: 0.0, kd: 0.0, out_limit: 3.0}
+    vertical: {kp: 0.0,  ki: 0.0, kd: 0.0, out_limit: 2.0}
+
+controller:
+  backend: mock
+
+sinks:
+  video:     {enabled: true, path: output/pipeline.mp4, codec: mp4v, fps: 30, draw: true}
+  telemetry: {enabled: true, path: output/telemetry.jsonl, csv_summary: output/telemetry_summary.csv}
+  control_log: {enabled: true, path: output/commands.jsonl}

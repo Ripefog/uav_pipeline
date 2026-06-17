@@ -1,0 +1,29 @@
+# UAV Edge Pipeline — dependencies
+# Install the groups you need; the core pipeline (Track + Follow + sinks) runs
+# on the "core" group alone. Detection adds the engine for your platform.
+
+# ---- core (always) ----
+numpy>=1.23
+opencv-python>=4.6
+PyYAML>=6.0
+
+# ---- detection: shared NMS (used by every backend via eval_yolo.utils.util) ----
+torch>=2.0
+torchvision>=0.15
+
+# ---- detection: OpenVINO backend (default on Windows / x86) ----
+openvino>=2023.0
+
+# ---- detection: ONNX Runtime backend ----
+onnxruntime>=1.15
+
+# ---- OCR (optional; enable ocr.enabled in config) ----
+# NOTE: TF 2.x has no GPU on Jetson/Blackwell — OCR runs CPU-only there.
+fast-plate-ocr>=0.1
+tensorflow>=2.15
+
+# ---- Jetson-only (install via JetPack SDK / apt, NOT pip where possible) ----
+# tensorrt        # matches the JetPack-bundled version
+# pycuda          # pip install pycuda (builds against system CUDA)
+# pymavlink       # for the MAVLink controller (currently a stub)
+# rclpy           # for the ROS2 controller (currently a stub); from your ROS2 distro

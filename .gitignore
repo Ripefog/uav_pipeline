@@ -1,0 +1,47 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# ── Secrets / local config ───────────────────────────────────
+# .env may hold local paths/keys; commit only the .env.example templates.
+.env
+*.local
+
+# ── Generated outputs ────────────────────────────────────────
+output/
+**/output/
+*_pred.jpg
+*_pred.png
+
+# ── Temporary verification scripts ───────────────────────────
+_verify*.py
+
+# ── Build artifacts NOT shipped (committed: .onnx/.keras/.bin/.xml) ──
+*.engine        # TensorRT engines — build per-device via export_tensorrt.py
+*.tflite
+*.pb
+*.mlmodel
+
+# ── IDE / editor ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ───────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store

@@ -1,0 +1,102 @@
+# ==========================================================================
+# UAV Edge Pipeline — default config (reference, all keys documented).
+# Copy this and tweak per deployment (see windows_openvino.yaml, jetson_trt.yaml).
+# Paths are relative to the code root (D:\UAV\code) when run via the scripts.
+# ==========================================================================
+
+source:
+  type: video            # video | webcam | image_dir | gstreamer
+  path: ""               # video file / image folder; or use --source on the CLI
+  index: 0               # webcam index (type: webcam)
+  gstreamer: ""          # gst pipeline string (type: gstreamer)
+  loop: true
+  fps: 30
+  max_frames: 0          # 0 = all
+
+detector:
+  backend: openvino      # torch | onnx | openvino | trt
+  device: ""             # "" auto; CPU / GPU (OpenVINO) ; cuda:0 (torch/onnx)
+  imgsz: 640
+  conf: 0.25
+  iou: 0.45
+  fp16: false            # torch cuda half; trt fp16
+  classes_of_interest: []  # [] = all classes; e.g. [0,3,5]
+  primary:
+    pt:       eval_yolo/weights/best_yolov26n_qat_int8_static.pt
+    onnx:     eval_yolo/weights/best_yolov26n_qat_int8_static.onnx
+    openvino: eval_yolo/weights/best_yolov26n_qat_int8_static.xml
+    trt:      eval_yolo/weights/best_yolov26n_qat_int8_static.engine
+    names_yaml: eval_yolo/utils/args.yaml
+
+ocr:
+  enabled: false         # OCR adds a TF/Keras dependency; enable when needed
+  keras_model: eval_ocr/weights/plate_ocr.keras
+  plate_config: eval_ocr/weights/plate_config.yaml
+  crop_mode: vehicle_lower_third   # vehicle_lower_third | plate_detection
+  vehicle_classes_for_lower_third: [car, van, truck, bus]
+  min_plate_area_px: 200
+  every_n_frames: 5      # recognize each track every N frames
+  vote_window: 5         # majority-vote window to denoise readings
+  plate_detector:
+    enabled: false       # set true + fill a path below to use crop_mode: plate_detection
+    backend: openvino
+    onnx:     eval_yolo/weights/yolov26n_qat_plate_int8.onnx
+    openvino: eval_yolo/weights/yolov26n_qat_plate_int8.xml
+
+tracker:                 # faithful port of pratap424/visdrone_mot thresholds
+  high_conf: 0.4
+  low_conf: 0.15
+  iou: 0.3
+  max_age: 50
+  min_hits: 3
+  emat: true             # Ego-Motion-Adaptive Tracking (relax thr. on heavy motion)
+  same_class_gate: false # true => IDs won't cross class boundaries (dense scenes)
+  interpolate_max_gap: 5
+  cmc:
+    enabled: true
+    method: affine       # affine | homography
+    downscale: 0.5       # process CMC at half-res for speed
+    n_features: 1000
+    match_ratio: 0.75    # Lowe ratio test
+    ransac_thresh: 5.0
+    min_matches: 20
+
+follow:
+  enabled: true
+  default_policy: highest_score_area   # highest_score_area | largest_area | nearest_center
+  locked_id: null                      # int to stick to one target id
+  preferred_classes: [car, van, truck, bus, pedestrian]
+  target_area_norm: 0.12   # desired target_area / frame_area (controls forward PID)
+  deadzone_px: 12.0
+  lost_recovery_frames: 15 # coast on last command before braking
+  pid:
+    # sign convention: yaw>0 pan right, pitch>0 tilt down, forward<0 back up
+    yaw:     {kp: 0.08, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    pitch:   {kp: 0.06, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    forward: {kp: 0.40, ki: 0.0, kd: 0.0, out_limit: 3.0}
+    vertical: {kp: 0.0,  ki: 0.0, kd: 0.0, out_limit: 2.0}  # altitude hold
+
+controller:
+  backend: mock          # mock | mavlink | ros2 (latter two are stubs)
+  mavlink:
+    connection: "udpin:0.0.0.0:14550"
+    system_id: 1
+  ros2:
+    node: "uav_follow"
+    cmd_vel_topic: "/cmd_vel"
+    gimbal_topic: "/gimbal/cmd"
+
+sinks:
+  video:
+    enabled: true
+    path: output/pipeline.mp4
+    codec: mp4v          # mp4v (Windows) | avc1 (Jetson)
+    fps: 30
+    draw: true
+  telemetry:
+    enabled: true
+    path: output/telemetry.jsonl
+    csv_summary: output/telemetry_summary.csv
+  control_log:
+    enabled: true
+    path: output/commands.jsonl
