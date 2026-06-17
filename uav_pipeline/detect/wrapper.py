@@ -13,7 +13,7 @@ try:
 except ImportError as _e:  # pragma: no cover
     raise ImportError("PyYAML required: pip install pyyaml") from _e
 
-from .._paths import EVAL_YOLO_DIR
+from .._paths import resolve
 from ..config import DetectorCfg, PlateDetectorCfg
 from ..contracts import Detection
 from .base import build_backend
@@ -23,8 +23,8 @@ from .postprocess import postprocess, to_detections
 def load_names(names_yaml: str) -> Dict[int, str]:
     """Load the ``names:`` map from a YOLO args.yaml (or a bare names dict)."""
     if not names_yaml:
-        names_yaml = os.path.join(EVAL_YOLO_DIR, "utils", "args.yaml")
-    with open(names_yaml, "r", encoding="utf-8") as f:
+        names_yaml = "weights/names.yaml"
+    with open(resolve(names_yaml), "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     raw = data.get("names", data) if isinstance(data, dict) else data
     return {int(k): str(v) for k, v in raw.items()}
@@ -36,12 +36,13 @@ class UnifiedDetector:
     def __init__(self, cfg: DetectorCfg):
         self.cfg = cfg
         p = cfg.primary
-        model_path = {"torch": p.pt, "onnx": p.onnx,
-                      "openvino": p.openvino, "trt": p.trt}.get(cfg.backend, "")
-        if not model_path:
+        raw = {"torch": p.pt, "onnx": p.onnx,
+               "openvino": p.openvino, "trt": p.trt}.get(cfg.backend, "")
+        if not raw:
             raise ValueError(
                 f"No model path configured for backend '{cfg.backend}'. "
                 f"Set detector.primary.{cfg.backend} in the config YAML.")
+        model_path = resolve(raw)
         self.names = load_names(cfg.primary.names_yaml)
         self.coi = tuple(cfg.classes_of_interest)
         self.backend = build_backend(
@@ -60,12 +61,12 @@ class UnifiedDetector:
 
     # -- optional plate detection ------------------------------------------
     def enable_plate(self, pcfg: PlateDetectorCfg):
-        path = {"onnx": pcfg.onnx, "openvino": pcfg.openvino,
-                "pt": pcfg.pt, "trt": pcfg.trt}.get(pcfg.backend, "")
-        if not path:
+        raw = {"onnx": pcfg.onnx, "openvino": pcfg.openvino,
+               "pt": pcfg.pt, "trt": pcfg.trt}.get(pcfg.backend, "")
+        if not raw:
             raise ValueError(f"No plate model path for backend '{pcfg.backend}'")
         self._plate_backend = build_backend(
-            pcfg.backend, path, imgsz=self.cfg.imgsz, device=self.cfg.device,
+            pcfg.backend, resolve(raw), imgsz=self.cfg.imgsz, device=self.cfg.device,
             fp16=self.cfg.fp16)
         self._plate_names = {0: "plate"}
 

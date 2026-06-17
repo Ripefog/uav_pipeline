@@ -1,6 +1,6 @@
 """Typed configuration loaded from a single YAML file.
 
-Replaces the scattered ``.env`` files of ``eval_yolo``/``eval_ocr`` with one
+Replaces the scattered ``.env`` files of the original infer scripts with one
 declarative file (see ``configs/*.yaml``). Dataclasses are built tolerantly:
 unknown keys are ignored, missing keys fall back to defaults.
 """

@@ -8,7 +8,7 @@ from ..contracts import FrameMeta
 
 
 class FrameSource(ABC):
-    """Single-frame streaming source (contrast with eval_yolo's load-all-to-RAM)."""
+    """Single-frame streaming source (contrast with the load-all-to-RAM infer scripts)."""
 
     fps: float = 30.0
     shape: Optional[Tuple[int, int]] = None   # (H, W) once known

@@ -5,15 +5,18 @@ three competition pillars:
 
 | Pillar (VN)   | Module        | What it does                                                        |
 |---------------|---------------|---------------------------------------------------------------------|
-| **Phát hiện** | `detect/`     | Real-time object detection — reuses `eval_yolo` (torch/onnx/openvino) + adds a TensorRT backend. |
+| **Phát hiện** | `detect/`     | Real-time object detection — vendored YOLO backends (torch/onnx/openvino) + a TensorRT backend. |
 | **Theo dấu**  | `track/`      | Multi-object tracking with occlusion handling — **faithful port of [`pratap424/visdrone_mot`](https://github.com/pratap424/visdrone_mot)** (CMC + ByteTrack 2-stage + EMAT + interpolation). |
 | **Bám đuổi**  | `follow/`     | Keeps the target framed and emits UAV commands via a PID controller (gimbal/body rates). Mock controller by default; MAVLink/ROS2 stubs ready to wire. |
 
-Plus: license-plate **OCR** (`ocr/`, reuses `eval_ocr`), streaming **sources**
+Plus: license-plate **OCR** (`ocr/`, vendored), streaming **sources**
 (video/webcam/image-dir/GStreamer), and **sinks** (annotated HUD video,
 telemetry JSONL/CSV, command log).
 
-It does **not** modify `eval_yolo` or `eval_ocr` — it imports them.
+**Self-contained:** the YOLO helpers it needs (NMS, letterbox, model defs) are
+vendored under `_vendor/`, and the model **weights** + class names ship in
+`weights/`. It has **no dependency on any sibling `eval_yolo` / `eval_ocr`
+folder** — clone and run.
 
 ---
 
@@ -23,7 +26,7 @@ It does **not** modify `eval_yolo` or `eval_ocr` — it imports them.
 
 `pipeline.process_frame()` runs the following chain for **each frame** in a
 single-frame streaming loop (it does not load the whole video into RAM, unlike
-`eval_yolo`'s infer scripts):
+the original YOLO infer scripts):
 
 ```
 ┌────────────┐
@@ -50,7 +53,7 @@ single-frame streaming loop (it does not load the whole video into RAM, unlike
         │ tracks                                       plates ─┤
         ▼                                                      ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ ③a OCR (optional)  ocr/plate_ocr.py  (wraps eval_ocr)         │
+│ ③a OCR (optional)  ocr/plate_ocr.py  (vendored)              │
 │   crop_mode: plate_detection ─┐  or  vehicle_lower_third      │
 │   PlateOCR.recognize → PlateVoter.majority → Track.plate_text │
 └──────────────────────────────────────────────────────────────┘
@@ -74,19 +77,23 @@ single-frame streaming loop (it does not load the whole video into RAM, unlike
                             └──────────────────────────────────┘
 ```
 
-### Code provenance — reuse vs port vs new
+### Code provenance — vendored vs ported vs new
 
 ```
-REUSE verbatim (untouched)      PORT FAITHFUL (by request)          NEW (the differentiator)
-─────────────────────────       ────────────────────────────        ──────────────────────
-eval_yolo                       ← pratap424/visdrone_mot             follow/   (selector · pid · controller)
-  utils.dataset.resize ────────►│ track/camera_motion.py  (CMC)     controllers/ (mock + stubs)
-  utils.util.NMS(_v26) ────────►│ track/drone_tracker.py (ByteTrack) sinks/    (HUD · telemetry · control_log)
-  infer_torch._load_model ─────►│   constant-velocity, greedy IoU,   pipeline.py (orchestrator)
-eval_ocr                        │   EMAT, track interpolation        sources/  (4 source types)
-  decode_plate ────────────────►└─ NO Kalman / Hungarian / neural    scripts/export_tensorrt (TRT)
-                                    ReID — CMC + max_age + interp    detect/backends/trt (Jetson)
+VENDORED (copied into _vendor/ + weights/)   PORT FAITHFUL              NEW (the differentiator)
+─────────────────────────────────────────     ──────────────────────    ──────────────────────
+  utils.util  (NMS×2, make_anchors)           ← pratap424/visdrone_mot   follow/   (selector · pid · controller)
+  nets.{nn,nn_v26}  (torch model defs)        │ track/camera_motion.py   controllers/ (mock + stubs)
+  letterbox (preprocess.py, inlined)          │ track/drone_tracker.py   sinks/    (HUD · telemetry · control_log)
+  _load_model (torch_backend, inlined)        │   (ByteTrack)            pipeline.py (orchestrator)
+  weights/ (onnx/xml/bin + keras + names)     │   constant-velocity,     sources/  (4 source types)
+  decode_plate (plate_ocr.py, inlined)        │   greedy IoU, EMAT,      scripts/export_tensorrt (TRT)
+                                               └─ NO Kalman/Hungarian/   detect/backends/trt (Jetson)
+                                                   neural ReID
 ```
+
+Everything the pipeline needs to run is inside this package — no external
+`eval_yolo` / `eval_ocr` directories are required at runtime.
 
 ### Inside the tracker (the Theo dấu pillar)
 
@@ -127,25 +134,34 @@ uav_pipeline/
 ├── contracts.py        # Detection / Track / Command / FrameMeta / FollowState / FrameContext
 ├── config.py           # typed config from one YAML
 ├── pipeline.py         # single-frame loop: detect → track → ocr → follow → sinks
-├── _paths.py           # puts eval_yolo on sys.path so `utils`/`nets` resolve
+├── _paths.py           # puts _vendor on sys.path; resolves weight paths; exposes PKG_DIR
+├── _vendor/            # vendored YOLO helpers (no external dependency)
+│   ├── utils/util.py   #   non_max_suppression[_v26], make_anchors, wh2xy, …
+│   └── nets/{nn,nn_v26}.py  # torch model defs (for the .pt torch backend)
+├── weights/            # bundled models + class names (ships with the repo)
+│   ├── best_yolov26n_qat_int8_static.{onnx,xml,bin}
+│   ├── yolov26n_qat_plate_int8.{onnx,xml,bin}
+│   ├── plate_ocr.keras + plate_config.yaml
+│   └── names.yaml      # class-id → name (0:pedestrian … 9:motor)
 ├── sources/            # FrameSource ABC + video/webcam/image_dir/gstreamer
-├── detect/             # preprocess/postprocess (reuse eval_yolo) + backends + UnifiedDetector
+├── detect/             # preprocess (letterbox) / postprocess (NMS) + backends + UnifiedDetector
 │   └── backends/       #   openvino | onnx | torch | trt
 ├── track/              # camera_motion.py (CMC+EMAT) + drone_tracker.py (ByteTrack port)
 ├── ocr/                # plate_ocr.py (fast-plate-ocr, lazy)
 ├── follow/             # pid / selector / controller + controllers/{mock,mavlink,ros2}
 ├── sinks/              # HUD video / telemetry / control_log
 ├── scripts/            # run_pipeline / export_tensorrt / validate_pipeline
-└── configs/            # default / windows_openvino / jetson_trt
+└── configs/            # default / windows_onnx / windows_openvino / jetson_trt
 ```
 
 ---
 
 ## Quickstart
 
-> Run everything from the **code root** (`D:\UAV\code`), so `eval_yolo`/`eval_ocr`
-> resolve. `pip install -r uav_pipeline/requirements.txt` first (at least
-> `numpy`, `opencv-python`, `pyyaml`, `torch`, `torchvision`).
+> Run from the directory that **contains** `uav_pipeline/` (the repo root).
+> `pip install -r uav_pipeline/requirements.txt` first (at least
+> `numpy`, `opencv-python`, `pyyaml`, `torch`, `torchvision`). The weights ship
+> in `uav_pipeline/weights/`, so no other folders are needed.
 
 ### 1. Smoke-test the core (no model, no weights — tests Track + Follow)
 
@@ -173,10 +189,10 @@ Point at an image folder instead with `--source-type image_dir --source path/to/
 ### 3. Deploy on Jetson Orin (TensorRT FP16 + GStreamer)
 
 ```bash
-# a) export the engine (FP16) from the existing ONNX
+# a) export the engine (FP16) from the bundled ONNX
 python -m uav_pipeline.scripts.export_tensorrt \
-  --onnx eval_yolo/weights/best_yolov26n_qat_int8_static.onnx \
-  --engine eval_yolo/weights/best_yolov26n_qat_int8_static.engine --imgsz 640 --fp16
+  --onnx uav_pipeline/weights/best_yolov26n_qat_int8_static.onnx \
+  --engine uav_pipeline/weights/best_yolov26n_qat_int8_static.engine --imgsz 640 --fp16
 
 # b) run with the Jetson config (edit the GStreamer pipeline string first)
 python -m uav_pipeline.scripts.run_pipeline -c uav_pipeline/configs/jetson_trt.yaml
@@ -203,7 +219,8 @@ comments). Highlights:
 
 ### Enable OCR (license plates)
 
-1. Ensure `eval_ocr/weights/plate_ocr.keras` and `plate_config.yaml` exist.
+1. The weights already ship in `weights/` (`plate_ocr.keras`, `plate_config.yaml`).
+   Install the OCR deps: `pip install tensorflow-cpu fast-plate-ocr`.
 2. In the config: `ocr.enabled: true`. Default `crop_mode: vehicle_lower_third`
    reads the bottom third of each vehicle track.
 3. (Optional) `ocr.plate_detector.enabled: true` + `crop_mode: plate_detection`

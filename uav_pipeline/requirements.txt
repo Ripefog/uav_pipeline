@@ -7,7 +7,7 @@ numpy>=1.23
 opencv-python>=4.6
 PyYAML>=6.0
 
-# ---- detection: shared NMS (used by every backend via eval_yolo.utils.util) ----
+# ---- detection: shared NMS (every backend; vendored under _vendor/utils/util.py) ----
 torch>=2.0
 torchvision>=0.15
 

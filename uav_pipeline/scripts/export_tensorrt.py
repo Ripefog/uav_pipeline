@@ -5,15 +5,14 @@ detector's fixed input size. FP16 by default; INT8 only with a calibration
 directory (the single biggest accuracy risk — supply your own representative
 crops).
 
-Prereq: produce the ONNX first via ``eval_yolo/export_onnx.py`` (opset 12,
-fixed imgsz, dynamic batch dim), e.g.:
-
-    python eval_yolo/export_onnx.py   # uses eval_yolo/.env (ONNX_MODEL_PATH, INPUT_SIZE)
+Prereq: an ONNX model (opset 12, fixed imgsz). A ready one ships in
+``weights/best_yolov26n_qat_int8_static.onnx``; export your own from a ``.pt``
+with your training stack if needed.
 
 Then:
     python -m uav_pipeline.scripts.export_tensorrt \\
-        --onnx eval_yolo/weights/best_yolov26n_qat_int8_static.onnx \\
-        --engine eval_yolo/weights/best_yolov26n_qat_int8_static.engine \\
+        --onnx uav_pipeline/weights/best_yolov26n_qat_int8_static.onnx \\
+        --engine uav_pipeline/weights/best_yolov26n_qat_int8_static.engine \\
         --imgsz 640 --fp16
 """
 import argparse

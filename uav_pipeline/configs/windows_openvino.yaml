@@ -16,13 +16,13 @@ detector:
   fp16: false
   classes_of_interest: []
   primary:
-    openvino: eval_yolo/weights/best_yolov26n_qat_int8_static.xml
-    names_yaml: eval_yolo/utils/args.yaml
+    openvino: weights/best_yolov26n_qat_int8_static.xml
+    names_yaml: weights/names.yaml
 
 ocr:
-  enabled: false      # flip true after placing eval_ocr weights
-  keras_model: eval_ocr/weights/plate_ocr.keras
-  plate_config: eval_ocr/weights/plate_config.yaml
+  enabled: false      # flip true to enable plate OCR (weights/plate_ocr.keras)
+  keras_model: weights/plate_ocr.keras
+  plate_config: weights/plate_config.yaml
   crop_mode: vehicle_lower_third
   vehicle_classes_for_lower_third: [car, van, truck, bus]
   every_n_frames: 5

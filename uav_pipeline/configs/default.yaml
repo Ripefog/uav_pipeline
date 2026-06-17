@@ -22,16 +22,16 @@ detector:
   fp16: false            # torch cuda half; trt fp16
   classes_of_interest: []  # [] = all classes; e.g. [0,3,5]
   primary:
-    pt:       eval_yolo/weights/best_yolov26n_qat_int8_static.pt
-    onnx:     eval_yolo/weights/best_yolov26n_qat_int8_static.onnx
-    openvino: eval_yolo/weights/best_yolov26n_qat_int8_static.xml
-    trt:      eval_yolo/weights/best_yolov26n_qat_int8_static.engine
-    names_yaml: eval_yolo/utils/args.yaml
+    pt:       weights/best_yolov26n_qat_int8_static.pt
+    onnx:     weights/best_yolov26n_qat_int8_static.onnx
+    openvino: weights/best_yolov26n_qat_int8_static.xml
+    trt:      weights/best_yolov26n_qat_int8_static.engine
+    names_yaml: weights/names.yaml
 
 ocr:
   enabled: false         # OCR adds a TF/Keras dependency; enable when needed
-  keras_model: eval_ocr/weights/plate_ocr.keras
-  plate_config: eval_ocr/weights/plate_config.yaml
+  keras_model: weights/plate_ocr.keras
+  plate_config: weights/plate_config.yaml
   crop_mode: vehicle_lower_third   # vehicle_lower_third | plate_detection
   vehicle_classes_for_lower_third: [car, van, truck, bus]
   min_plate_area_px: 200
@@ -40,8 +40,8 @@ ocr:
   plate_detector:
     enabled: false       # set true + fill a path below to use crop_mode: plate_detection
     backend: openvino
-    onnx:     eval_yolo/weights/yolov26n_qat_plate_int8.onnx
-    openvino: eval_yolo/weights/yolov26n_qat_plate_int8.xml
+    onnx:     weights/yolov26n_qat_plate_int8.onnx
+    openvino: weights/yolov26n_qat_plate_int8.xml
 
 tracker:                 # faithful port of pratap424/visdrone_mot thresholds
   high_conf: 0.4

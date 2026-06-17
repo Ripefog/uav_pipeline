@@ -1,10 +1,10 @@
 """License-plate OCR — thin lazy wrapper over ``fast-plate-ocr`` (Keras CCT).
 
-The decode + model-load mirror ``eval_ocr/infer.py`` exactly; we copy the
-4-line ``decode_plate`` here (pure numpy) so importing this module does NOT
-pull in ``fast_plate_ocr``/TensorFlow unless OCR is actually enabled. TF is
-forced to CPU (TF 2.17 has no GPU support on Jetson/Blackwell), matching
-``eval_ocr``.
+``decode_plate`` is a 4-line pure-numpy copy of the original plate-recognition
+decode (kept inline so importing this module does NOT pull in
+``fast_plate_ocr``/TensorFlow unless OCR is actually enabled). TF is forced to
+CPU (TF 2.x has no GPU support on Jetson/Blackwell). The Keras model + plate
+config ship in ``weights/`` (``plate_ocr.keras`` + ``plate_config.yaml``).
 """
 import os
 from collections import Counter, defaultdict, deque

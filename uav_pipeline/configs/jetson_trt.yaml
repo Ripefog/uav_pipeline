@@ -1,8 +1,8 @@
 # Jetson Orin preset — TensorRT FP16 engine + GStreamer CSI/RTSP.
 # Prereq: build the engine first, e.g.
 #   python -m uav_pipeline.scripts.export_tensorrt \
-#       --onnx eval_yolo/weights/best_yolov26n_qat_int8_static.onnx \
-#       --engine eval_yolo/weights/best_yolov26n_qat_int8_static.engine --imgsz 640 --fp16
+#       --onnx weights/best_yolov26n_qat_int8_static.onnx \
+#       --engine weights/best_yolov26n_qat_int8_static.engine --imgsz 640 --fp16
 
 source:
   type: gstreamer
@@ -20,13 +20,13 @@ detector:
   fp16: true
   classes_of_interest: []
   primary:
-    trt: eval_yolo/weights/best_yolov26n_qat_int8_static.engine
-    names_yaml: eval_yolo/utils/args.yaml
+    trt: weights/best_yolov26n_qat_int8_static.engine
+    names_yaml: weights/names.yaml
 
 ocr:
   enabled: false       # TF/Keras is CPU-only on Jetson; enable only if needed
-  keras_model: eval_ocr/weights/plate_ocr.keras
-  plate_config: eval_ocr/weights/plate_config.yaml
+  keras_model: weights/plate_ocr.keras
+  plate_config: weights/plate_config.yaml
   crop_mode: vehicle_lower_third
   vehicle_classes_for_lower_third: [car, van, truck, bus]
   every_n_frames: 8

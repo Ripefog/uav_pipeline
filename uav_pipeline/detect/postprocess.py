@@ -1,6 +1,7 @@
 """Shared postprocessing — NMS (auto-select v26 vs DFL head) + inverse mapping.
 
-Reuses ``eval_yolo.utils.util.non_max_suppression`` / ``..._v26`` verbatim so
+Uses the vendored ``utils.util.non_max_suppression`` / ``..._v26`` (verbatim
+copies of the original YOLO helpers, under ``_vendor/utils/util.py``) so
 numerics are byte-identical to the standalone infer scripts. The head format is
 auto-detected exactly as the originals do: last-dim == 6 => HybridYOLO/v26
 ``[batch, k, 6]`` head, else DFL ``[batch, 4+nc, anchors]`` head.
@@ -14,7 +15,7 @@ try:
 except ImportError:  # detection backends need torch for NMS; core pipeline does not
     torch = None
 
-from utils import util  # noqa: E402  (path set by uav_pipeline._paths)
+from utils import util  # noqa: E402  (vendored via uav_pipeline._paths._vendor)
 
 from ..contracts import Detection
 

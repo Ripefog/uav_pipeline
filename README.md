@@ -1,7 +1,6 @@
-# uav_pipeline — UAV Edge AI Pipeline
+# uav_pipeline — UAV Edge AI Pipeline (FPT UAV AI Hackathon 2026)
 
-Single-frame streaming onboard pipeline for **FPT UAV AI Hackathon 2026**,
-covering the three competition pillars:
+Single-frame streaming onboard pipeline covering the three competition pillars:
 
 - **Phát hiện (Detect)** — object detection, 4 backends (torch/onnx/openvino/trt)
 - **Theo dấu (Track)** — faithful port of [`pratap424/visdrone_mot`](https://github.com/pratap424/visdrone_mot) (CMC + ByteTrack + EMAT + interpolation)
@@ -9,39 +8,25 @@ covering the three competition pillars:
 
 Plus optional license-plate **OCR**.
 
-> ### ⚠️ This repo contains ONLY `uav_pipeline/`
->
-> It is the **orchestration + tracking + follow + OCR** layer. It **imports**
-> two sibling packages verbatim and does **not** vendor them (they hold the
-> detection/OCR backends and the model weights):
->
-> - `eval_yolo/` — detection (preprocess, NMS, model loaders, `weights/`)
-> - `eval_ocr/` — plate-OCR (fast-plate-ocr Keras CCT, `weights/plate_ocr.keras`)
->
-> **To run**, place this folder as a **sibling** of `eval_yolo/` and `eval_ocr/`:
->
-> ```
-> some_code_root/
-> ├── uav_pipeline/      ← this repo
-> ├── eval_yolo/         ← (sibling) + weights/
-> └── eval_ocr/          ← (sibling) + weights/
-> ```
->
-> Then from `some_code_root/`: `pip install -r uav_pipeline/requirements.txt`.
+### ✅ Self-contained — clone and run
 
-Full architecture, quickstart, and config docs live in
-**[`uav_pipeline/README.md`](uav_pipeline/README.md)**.
+This repository is a single self-contained package, `uav_pipeline/`. It needs
+**no sibling folders**:
 
-## Smoke-test (no weights needed — exercises Track + Follow)
+- The YOLO helpers (NMS, letterbox, model defs) are **vendored** under
+  `uav_pipeline/_vendor/`.
+- The **model weights** + class names ship under `uav_pipeline/weights/`
+  (YOLO `.onnx`/`.xml`/`.bin`, `plate_ocr.keras`, `names.yaml`).
 
 ```bash
-python -m uav_pipeline.scripts.validate_pipeline
-```
-
-## Run the full pipeline
-
-```bash
+git clone https://github.com/Ripefog/uav_full_pipeline.git
+cd uav_full_pipeline
+pip install -r uav_pipeline/requirements.txt        # + tensorflow-cpu fast-plate-ocr for OCR
+python -m uav_pipeline.scripts.validate_pipeline     # smoke-test (Track + Follow, no model)
 python -m uav_pipeline.scripts.run_pipeline \
-  -c uav_pipeline/configs/windows_onnx.yaml \
-  --source path/to/video.mp4
+  -c uav_pipeline/configs/windows_onnx.yaml --source path/to/video.mp4
 ```
+
+Full architecture, configuration, and deployment (Jetson/TensorRT, wiring a real
+drone via MAVLink/ROS2) are documented in
+**[`uav_pipeline/README.md`](uav_pipeline/README.md)**.

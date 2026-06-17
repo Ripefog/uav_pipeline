@@ -4,7 +4,7 @@
         detect -> (plates) -> track -> (ocr) -> follow.step -> controller.send -> sinks.write
 
 Owns timing (EMA FPS), graceful shutdown, and final stats. Differs from the
-``eval_yolo`` infer scripts in that it streams one frame at a time instead of
+the original YOLO infer scripts in that it streams one frame at a time instead of
 loading the whole video into RAM.
 """
 import time
@@ -13,6 +13,7 @@ from typing import List, Optional
 import numpy as np
 
 from .config import Config
+from ._paths import resolve
 from .contracts import Detection, FrameContext, FrameMeta
 from .detect.wrapper import UnifiedDetector
 from .follow import FollowController, make_controller
@@ -42,8 +43,8 @@ class Pipeline:
         if config.ocr.enabled:
             if config.ocr.keras_model and config.ocr.plate_config:
                 try:
-                    self.plate_ocr = PlateOCR(config.ocr.keras_model,
-                                              config.ocr.plate_config)
+                    self.plate_ocr = PlateOCR(resolve(config.ocr.keras_model),
+                                              resolve(config.ocr.plate_config))
                     self.plate_voter = PlateVoter(config.ocr.vote_window)
                 except Exception as e:  # pragma: no cover
                     print(f"[pipeline] OCR disabled (load failed): {e}")

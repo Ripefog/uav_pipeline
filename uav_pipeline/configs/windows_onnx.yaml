@@ -21,13 +21,13 @@ detector:
   fp16: false
   classes_of_interest: []
   primary:
-    onnx: eval_yolo/weights/best_yolov26n_qat_int8_static.onnx
-    names_yaml: eval_yolo/utils/args.yaml
+    onnx: weights/best_yolov26n_qat_int8_static.onnx
+    names_yaml: weights/names.yaml
 
 ocr:
   enabled: true
-  keras_model: eval_ocr/weights/plate_ocr.keras
-  plate_config: eval_ocr/weights/plate_config.yaml
+  keras_model: weights/plate_ocr.keras
+  plate_config: weights/plate_config.yaml
   crop_mode: plate_detection          # use the dedicated plate detector below
   vehicle_classes_for_lower_third: [car, van, truck, bus]   # only if crop_mode: vehicle_lower_third
   min_plate_area_px: 200
@@ -36,7 +36,7 @@ ocr:
   plate_detector:
     enabled: true
     backend: onnx
-    onnx: eval_yolo/weights/yolov26n_qat_plate_int8.onnx
+    onnx: weights/yolov26n_qat_plate_int8.onnx
 
 tracker:
   high_conf: 0.4
