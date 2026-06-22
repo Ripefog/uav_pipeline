@@ -88,6 +88,9 @@ class PlateDetectorCfg:
 @dataclass
 class OCRCfg:
     enabled: bool = False
+    device: str = "gpu"                        # cpu | gpu — GPU by default; auto-falls-back
+                                               #   to CPU where TF has no GPU (native Windows
+                                               #   TF>=2.11, Jetson without NVTF, tensorflow-cpu)
     keras_model: str = ""
     plate_config: str = ""
     crop_mode: str = "vehicle_lower_third"   # vehicle_lower_third | plate_detection

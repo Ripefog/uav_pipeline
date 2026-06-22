@@ -44,7 +44,8 @@ class Pipeline:
             if config.ocr.keras_model and config.ocr.plate_config:
                 try:
                     self.plate_ocr = PlateOCR(resolve(config.ocr.keras_model),
-                                              resolve(config.ocr.plate_config))
+                                              resolve(config.ocr.plate_config),
+                                              device=config.ocr.device)
                     self.plate_voter = PlateVoter(config.ocr.vote_window)
                 except Exception as e:  # pragma: no cover
                     print(f"[pipeline] OCR disabled (load failed): {e}")

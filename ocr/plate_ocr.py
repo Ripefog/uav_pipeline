@@ -2,9 +2,12 @@
 
 ``decode_plate`` is a 4-line pure-numpy copy of the original plate-recognition
 decode (kept inline so importing this module does NOT pull in
-``fast_plate_ocr``/TensorFlow unless OCR is actually enabled). TF is forced to
-CPU (TF 2.x has no GPU support on Jetson/Blackwell). The Keras model + plate
-config ship in ``weights/`` (``plate_ocr.keras`` + ``plate_config.yaml``).
+``fast_plate_ocr``/TensorFlow unless OCR is actually enabled). Device is
+config-driven (``ocr.device``: ``cpu`` default, or ``gpu``); CPU hides GPUs from
+TF via ``CUDA_VISIBLE_DEVICES=-1`` (also the only option on Jetson/Blackwell,
+where TF 2.x has no GPU). GPU mode requires the full ``tensorflow`` wheel +
+CUDA 12.x + cuDNN 9.x on PATH. The Keras model + plate config ship in
+``weights/`` (``plate_ocr.keras`` + ``plate_config.yaml``).
 """
 import os
 from collections import Counter, defaultdict, deque
@@ -29,14 +32,32 @@ def decode_plate(logits: np.ndarray, alphabet: str, pad_char: str) -> str:
 class PlateOCR:
     """Lazy Keras plate recognizer."""
 
-    def __init__(self, keras_model: str, plate_config: str):
-        # Force TF CPU + silence logs BEFORE importing fast_plate_ocr/Keras.
+    def __init__(self, keras_model: str, plate_config: str, device: str = "cpu"):
+        # Silence logs BEFORE importing fast_plate_ocr/Keras.
         os.environ.setdefault("KERAS_BACKEND", "tensorflow")
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
-        os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+        self.device = str(device).strip().lower()
+        if self.device == "cpu":
+            # CPU mode: hide GPUs from TF. (Jetson/Blackwell TF has no GPU anyway,
+            # and `tensorflow-cpu` has no GPU regardless.)
+            os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+        # GPU mode: leave CUDA_VISIBLE_DEVICES untouched so TF sees the GPU.
+        # Requires the full `tensorflow` wheel + CUDA 12.x + cuDNN 9.x on PATH.
 
         from fast_plate_ocr.train.model.config import load_plate_config_from_yaml
         from fast_plate_ocr.train.utilities.utils import load_keras_model
+
+        if self.device == "gpu":
+            # Let OCR share the GPU instead of grabbing all of its memory up front.
+            try:
+                import tensorflow as tf
+                for _g in tf.config.list_physical_devices("GPU"):
+                    try:
+                        tf.config.experimental.set_memory_growth(_g, True)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         with open(plate_config, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)

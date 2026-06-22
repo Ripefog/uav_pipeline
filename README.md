@@ -219,16 +219,22 @@ comments). Highlights:
   sets desired keep-distance (drives the forward PID); PID sign convention:
   `yaw>0` pan right, `pitch>0` tilt down, `forward<0` back up.
 - **`controller.backend`** — `mock` (default, safe), `mavlink`, `ros2` (stubs).
-- **`ocr.enabled`** — adds TF/Keras; off by default. See below.
+- **`ocr.enabled`** — adds TF/Keras; off by default. **`ocr.device`** defaults to
+  `gpu` (auto-falls-back to CPU where TF has no GPU). See below.
 
 ### Enable OCR (license plates)
 
 1. The weights already ship in `weights/` (`plate_ocr.keras`, `plate_config.yaml`).
-   Install the OCR deps: `pip install tensorflow-cpu fast-plate-ocr`.
+   Install the OCR deps: `pip install tensorflow fast-plate-ocr` (use
+   `tensorflow-cpu` on native Windows — TF ≥2.11 has no GPU there, so it's leaner).
 2. In the config: `ocr.enabled: true`. Default `crop_mode: vehicle_lower_third`
    reads the bottom third of each vehicle track.
 3. (Optional) `ocr.plate_detector.enabled: true` + `crop_mode: plate_detection`
    to use the dedicated plate model (`yolov26n_qat_plate_int8`).
+4. **Device:** `ocr.device: gpu` (the default) uses the GPU where TF supports it
+   (Linux/WSL2 with CUDA 12 + cuDNN 9, or Jetson with NVIDIA's NVTF). It
+   silently runs on CPU on native Windows (TF ≥2.11) or Jetson without NVTF —
+   set `ocr.device: cpu` to force CPU / suppress the GPU-probe log.
 
 ---
 

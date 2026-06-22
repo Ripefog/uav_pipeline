@@ -30,6 +30,7 @@ detector:
 
 ocr:
   enabled: false         # OCR adds a TF/Keras dependency; enable when needed
+  device: gpu            # gpu default; auto CPU-fallback where TF has no GPU
   keras_model: weights/plate_ocr.keras
   plate_config: weights/plate_config.yaml
   crop_mode: vehicle_lower_third   # vehicle_lower_third | plate_detection

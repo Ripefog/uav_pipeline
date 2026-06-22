@@ -25,6 +25,7 @@ detector:
 
 ocr:
   enabled: false       # TF/Keras is CPU-only on Jetson; enable only if needed
+  device: gpu          # gpu default; Jetson TF (aarch64) is CPU-only -> runs CPU unless NVTF installed
   keras_model: weights/plate_ocr.keras
   plate_config: weights/plate_config.yaml
   crop_mode: vehicle_lower_third

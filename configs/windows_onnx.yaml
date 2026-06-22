@@ -1,6 +1,6 @@
 # Windows dev preset — ONNX Runtime on CPU (no OpenVINO/CUDA needed).
-# This is the config that runs out-of-the-box on the dev box where only
-# onnxruntime + tensorflow-cpu + fast-plate-ocr are installed.
+# This is the config that runs out-of-the-box on the dev box (ONNX detector on
+# CPU; OCR on GPU via `tensorflow` + CUDA 12.x + cuDNN 9 when ocr.device: gpu).
 # OCR is ON (plate_detection mode: a dedicated plate-detector ONNX model crops
 # the plate, then fast-plate-ocr Keras CCT reads it).
 #
@@ -26,6 +26,7 @@ detector:
 
 ocr:
   enabled: true
+  device: gpu           # gpu default; on native Windows TF>=2.11 auto-runs CPU (no GPU available)
   keras_model: weights/plate_ocr.keras
   plate_config: weights/plate_config.yaml
   crop_mode: plate_detection          # use the dedicated plate detector below

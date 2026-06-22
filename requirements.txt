@@ -18,9 +18,12 @@ openvino>=2023.0
 onnxruntime>=1.15
 
 # ---- OCR (optional; enable ocr.enabled in config) ----
-# NOTE: TF 2.x has no GPU on Jetson/Blackwell — OCR runs CPU-only there.
+# OCR device defaults to GPU (ocr.device: gpu) and auto-falls-back to CPU where
+# TF has no GPU: native Windows TF>=2.11, Jetson without NVIDIA's NVTF build, or
+# the `tensorflow-cpu` wheel. Real GPU OCR needs Linux/WSL2 + `tensorflow`
+# (CUDA 12.x + cuDNN 9.x) or NVTF on Jetson.
 fast-plate-ocr>=0.1
-tensorflow>=2.15
+tensorflow>=2.15          # `tensorflow-cpu` on Windows-native (no GPU there either way)
 
 # ---- Jetson-only (install via JetPack SDK / apt, NOT pip where possible) ----
 # tensorrt        # matches the JetPack-bundled version
