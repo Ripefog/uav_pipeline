@@ -44,6 +44,30 @@ def postprocess(raw_output, conf: float, iou: float) -> np.ndarray:
     return d.detach().cpu().numpy().astype(np.float32)
 
 
+def postprocess_batch(raw_output, conf: float, iou: float) -> List[np.ndarray]:
+    """Like ``postprocess`` but keeps every image of the batch.
+
+    Returns a list of ``[N_i, 6]`` arrays, one per input frame (same order).
+    """
+    if torch is None:
+        raise RuntimeError("torch is required for NMS postprocessing")
+    out = raw_output if isinstance(raw_output, torch.Tensor) \
+        else torch.from_numpy(np.asarray(raw_output))
+
+    if out.dim() == 3 and out.shape[-1] == 6:
+        dets = util.non_max_suppression_v26(out, conf, iou)
+    else:
+        dets = util.non_max_suppression(out, confidence_threshold=conf, iou_threshold=iou)
+
+    results: List[np.ndarray] = []
+    for d in dets:
+        if d is None or len(d) == 0:
+            results.append(np.zeros((0, 6), dtype=np.float32))
+        else:
+            results.append(d.detach().cpu().numpy().astype(np.float32))
+    return results
+
+
 def to_detections(
     dets: np.ndarray,
     ratio: tuple,

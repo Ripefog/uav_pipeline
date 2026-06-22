@@ -19,6 +19,7 @@ env/
 *.local
 
 # ── Generated outputs ────────────────────────────────────────
+input/
 output/
 **/output/
 *_pred.jpg

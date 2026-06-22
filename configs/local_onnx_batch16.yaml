@@ -1,20 +1,14 @@
-# Windows dev preset — ONNX Runtime on CPU (no OpenVINO/CUDA needed).
-# This is the config that runs out-of-the-box on the dev box (ONNX detector on
-# CPU; OCR on GPU via `tensorflow` + CUDA 12.x + cuDNN 9 when ocr.device: gpu).
-# OCR is ON (plate_detection mode: a dedicated plate-detector ONNX model crops
-# the plate, then fast-plate-ocr Keras CCT reads it).
-#
-# Use:  python -m uav_pipeline.scripts.run_pipeline -c uav_pipeline/configs/windows_onnx.yaml --source <video|image_dir>
-
+# Local run — ONNX backend (CPU), batch=16 (gom 16 frame / 1 infer), OCR off.
 source:
   type: video
-  path: ""            # set via --source, or hardcode a video/image-dir here
+  path: ""
   loop: false
   fps: 30
 
 detector:
   backend: onnx
-  device: ""           # "" = CPU; cuda:0 if onnxruntime-gpu + CUDA
+  device: ""
+  batch: 16
   imgsz: 640
   conf: 0.25
   iou: 0.45
@@ -25,17 +19,17 @@ detector:
     names_yaml: weights/names.yaml
 
 ocr:
-  enabled: true
-  device: gpu           # gpu default; on native Windows TF>=2.11 auto-runs CPU (no GPU available)
+  enabled: false
+  device: gpu           # cpu | gpu (auto CPU-fallback nếu TF không thấy GPU)
   keras_model: weights/plate_ocr.keras
   plate_config: weights/plate_config.yaml
-  crop_mode: plate_detection          # use the dedicated plate detector below
-  vehicle_classes_for_lower_third: [car, van, truck, bus]   # only if crop_mode: vehicle_lower_third
+  crop_mode: vehicle_lower_third
+  vehicle_classes_for_lower_third: [car, van, truck, bus]
   min_plate_area_px: 200
   every_n_frames: 5
   vote_window: 5
   plate_detector:
-    enabled: true
+    enabled: false
     backend: onnx
     onnx: weights/yolov26n_qat_plate_int8.onnx
 
@@ -68,6 +62,6 @@ controller:
   backend: mock
 
 sinks:
-  video:     {enabled: true, path: output/pipeline_ocr.mp4, codec: mp4v, fps: 30, draw: true}
-  telemetry: {enabled: true, path: output/telemetry_ocr.jsonl, csv_summary: output/telemetry_ocr_summary.csv}
-  control_log: {enabled: true, path: output/commands_ocr.jsonl}
+  video:     {enabled: true, path: output/pipeline_onnxb.mp4, codec: mp4v, fps: 30, draw: true}
+  telemetry: {enabled: true, path: output/telemetry_onnxb.jsonl, csv_summary: output/telemetry_onnxb_summary.csv}
+  control_log: {enabled: true, path: output/commands_onnxb.jsonl}

@@ -22,6 +22,14 @@ class OpenVINOBackend(DetectorBackend):
         self.device = dev
         self.compiled = self.core.compile_model(xml, dev)
         self.req = self.compiled.create_infer_request()
+        # Fixed-batch IR (e.g. batch=16): tile the single frame to fill the batch
+        # and slice the first result back out.
+        try:
+            self._batch = int(self.compiled.input(0).get_partial_shape()[0].get_length())
+        except Exception:
+            self._batch = 1
+        if self._batch < 1:
+            self._batch = 1
 
     def _preprocess(self, img0):
         img_lb, ratio, pad = letterbox(img0, self.imgsz)
@@ -29,6 +37,11 @@ class OpenVINOBackend(DetectorBackend):
         return sample[None, ...], ratio, pad                  # [1,3,H,W]
 
     def _infer(self, model_input):
-        self.req.set_input_tensors([self._ov.Tensor(model_input)])
+        n = model_input.shape[0]
+        if self._batch > n:                       # pad single frame up to fixed batch
+            pad = np.repeat(model_input[:1], self._batch - n, axis=0)
+            model_input = np.concatenate([model_input, pad], axis=0)
+        self.req.set_input_tensors([self._ov.Tensor(np.ascontiguousarray(model_input))])
         self.req.infer()
-        return self.req.get_output_tensor(0).data
+        out = self.req.get_output_tensor(0).data
+        return out[:n]                            # keep only the real frame(s)

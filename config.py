@@ -71,6 +71,7 @@ class DetectorCfg:
     iou: float = 0.45
     fp16: bool = False
     device: str = ""                          # "" = auto; cuda:0 / CPU / GPU
+    batch: int = 1                            # >1 = buffer N frames, run detector once (fixed-batch IR)
     classes_of_interest: List[int] = field(default_factory=list)  # [] = all
     primary: PrimaryModelCfg = field(default_factory=PrimaryModelCfg)
 

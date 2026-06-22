@@ -1,15 +1,14 @@
-# Windows dev preset — OpenVINO on CPU, runs out of the box (no CUDA/Jetson).
-# Use:  python -m uav_pipeline.scripts.run_pipeline -c uav_pipeline/configs/windows_openvino.yaml --source <video_or_image_dir>
-
+# Local run — OpenVINO backend (CPU), batch=16 (gom 16 frame / 1 infer), OCR off.
 source:
   type: video
-  path: ""            # set via --source, or hardcode a video/image-dir here
-  loop: true
+  path: ""
+  loop: false
   fps: 30
 
 detector:
   backend: openvino
-  device: CPU
+  device: ""
+  batch: 16
   imgsz: 640
   conf: 0.25
   iou: 0.45
@@ -20,14 +19,19 @@ detector:
     names_yaml: weights/names.yaml
 
 ocr:
-  enabled: false      # flip true to enable plate OCR (weights/plate_ocr.keras)
-  device: gpu         # gpu default; auto CPU-fallback where TF has no GPU
+  enabled: false
+  device: gpu         # cpu | gpu (auto CPU-fallback nếu TF không thấy GPU)
   keras_model: weights/plate_ocr.keras
   plate_config: weights/plate_config.yaml
   crop_mode: vehicle_lower_third
   vehicle_classes_for_lower_third: [car, van, truck, bus]
+  min_plate_area_px: 200
   every_n_frames: 5
   vote_window: 5
+  plate_detector:
+    enabled: false
+    backend: openvino
+    onnx: weights/yolov26n_qat_plate_int8.onnx
 
 tracker:
   high_conf: 0.4
@@ -58,6 +62,6 @@ controller:
   backend: mock
 
 sinks:
-  video:     {enabled: true, path: output/pipeline.mp4, codec: mp4v, fps: 30, draw: true}
-  telemetry: {enabled: true, path: output/telemetry.jsonl, csv_summary: output/telemetry_summary.csv}
-  control_log: {enabled: true, path: output/commands.jsonl}
+  video:     {enabled: true, path: output/pipeline_ovb.mp4, codec: mp4v, fps: 30, draw: true}
+  telemetry: {enabled: true, path: output/telemetry_ovb.jsonl, csv_summary: output/telemetry_ovb_summary.csv}
+  control_log: {enabled: true, path: output/commands_ovb.jsonl}

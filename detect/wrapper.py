@@ -17,7 +17,7 @@ from .._paths import resolve
 from ..config import DetectorCfg, PlateDetectorCfg
 from ..contracts import Detection
 from .base import build_backend
-from .postprocess import postprocess, to_detections
+from .postprocess import postprocess, postprocess_batch, to_detections
 
 
 def load_names(names_yaml: str) -> Dict[int, str]:
@@ -58,6 +58,28 @@ class UnifiedDetector:
         raw = self.backend._infer(inp)
         dets = postprocess(raw, conf, iou)
         return to_detections(dets, ratio, pad, self.names, img0.shape[:2], self.coi)
+
+    def detect_batch(self, frames: List[np.ndarray], conf: Optional[float] = None,
+                     iou: Optional[float] = None) -> List[List[Detection]]:
+        """Detect on N frames with a single batched inference.
+
+        Preprocess each frame, stack to ``[N,3,H,W]``, run the backend once,
+        then map results back per frame. Returns one Detection list per frame.
+        """
+        conf = self.cfg.conf if conf is None else conf
+        iou = self.cfg.iou if iou is None else iou
+        inps, metas = [], []
+        for f in frames:
+            inp, ratio, pad = self.backend._preprocess(f)
+            inps.append(inp)
+            metas.append((ratio, pad, f.shape[:2]))
+        batch = np.concatenate(inps, axis=0)
+        raw = self.backend._infer(batch)
+        per = postprocess_batch(raw, conf, iou)
+        out: List[List[Detection]] = []
+        for dets, (ratio, pad, hw) in zip(per, metas):
+            out.append(to_detections(dets, ratio, pad, self.names, hw, self.coi))
+        return out
 
     # -- optional plate detection ------------------------------------------
     def enable_plate(self, pcfg: PlateDetectorCfg):

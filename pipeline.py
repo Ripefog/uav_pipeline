@@ -83,24 +83,54 @@ class Pipeline:
               f"backend={self.cfg.detector.backend} "
               f"ocr={'on' if self.plate_ocr else 'off'} "
               f"controller={self.cfg.controller.backend}")
+        batch = max(1, int(getattr(self.cfg.detector, "batch", 1)))
         try:
-            for meta, frame in self.source:
-                if self._stop:
-                    break
-                ctx = self.process_frame(meta, frame)
-                for s in self.sinks:
-                    s.write(ctx)
+            if batch > 1:
+                self._run_batched(batch)
+            else:
+                for meta, frame in self.source:
+                    if self._stop:
+                        break
+                    ctx = self.process_frame(meta, frame)
+                    for s in self.sinks:
+                        s.write(ctx)
         except KeyboardInterrupt:
             print("\n[pipeline] interrupted by user")
         finally:
             self.close()
 
     # ------------------------------------------------------------------ #
-    def process_frame(self, meta: FrameMeta, frame: np.ndarray) -> FrameContext:
+    def _run_batched(self, batch: int):
+        """Buffer `batch` frames, detect them in one inference, then run
+        track -> ocr -> follow -> sinks sequentially (order preserved)."""
+        buf = []
+        for meta, frame in self.source:
+            if self._stop:
+                break
+            buf.append((meta, frame))
+            if len(buf) < batch:
+                continue
+            self._flush_batch(buf)
+            buf = []
+        if buf and not self._stop:
+            self._flush_batch(buf)
+
+    def _flush_batch(self, buf):
+        frames = [f for _, f in buf]
+        det_lists = self.detector.detect_batch(frames)
+        for (meta, frame), detections in zip(buf, det_lists):
+            ctx = self.process_frame(meta, frame, detections=detections)
+            for s in self.sinks:
+                s.write(ctx)
+
+    # ------------------------------------------------------------------ #
+    def process_frame(self, meta: FrameMeta, frame: np.ndarray,
+                      detections: Optional[List[Detection]] = None) -> FrameContext:
         self._n_frames += 1
 
         # detect (primary, + optional plate detector)
-        detections = self.detector.detect(frame)
+        if detections is None:
+            detections = self.detector.detect(frame)
         plates = self.detector.detect_plates(frame) if self.detector.plate_enabled else []
 
         # track
