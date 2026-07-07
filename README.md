@@ -3,11 +3,11 @@
 A single-frame streaming AI pipeline that runs **onboard a UAV** and covers the
 three competition pillars:
 
-| Pillar (VN)   | Module        | What it does                                                        |
-|---------------|---------------|---------------------------------------------------------------------|
-| **Phát hiện** | `detect/`     | Real-time object detection — vendored YOLO backends (torch/onnx/openvino) + a TensorRT backend. |
-| **Theo dấu**  | `track/`      | Multi-object tracking with occlusion handling — **faithful port of [`pratap424/visdrone_mot`](https://github.com/pratap424/visdrone_mot)** (CMC + ByteTrack 2-stage + EMAT + interpolation). |
-| **Bám đuổi**  | `follow/`     | Keeps the target framed and emits UAV commands via a PID controller (gimbal/body rates). Mock controller by default; MAVLink/ROS2 stubs ready to wire. |
+| Pillar (VN)           | Module      | What it does                                                                                                                                                                                        |
+| --------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phát hiện** | `detect/` | Real-time object detection — vendored YOLO backends (torch/onnx/openvino) + a TensorRT backend.                                                                                                    |
+| **Theo dấu**   | `track/`  | Multi-object tracking with occlusion handling —**faithful port of [`pratap424/visdrone_mot`](https://github.com/pratap424/visdrone_mot)** (CMC + ByteTrack 2-stage + EMAT + interpolation). |
+| **Bám đuổi** | `follow/` | Keeps the target framed and emits UAV commands via a PID controller (gimbal/body rates). Mock controller by default; MAVLink/ROS2 stubs ready to wire.                                              |
 
 Plus: license-plate **OCR** (`ocr/`, vendored), streaming **sources**
 (video/webcam/image-dir/GStreamer), and **sinks** (annotated HUD video,
@@ -120,10 +120,10 @@ does it. No neural ReID is added.
 
 ### Backend / environment matrix
 
-| Target | Detector | OCR | Controller | Status |
-|--------|----------|-----|------------|--------|
-| Windows dev (x86) | `onnx` / `openvino` | TF/Keras (CPU) | mock | ✅ verified onnx + OCR |
-| Jetson Orin | `trt` (FP16, via `export_tensorrt`) | TF/Keras (CPU, throttled) | mavlink / ros2 | Jetson-only |
+| Target            | Detector                                | OCR                       | Controller     | Status                 |
+| ----------------- | --------------------------------------- | ------------------------- | -------------- | ---------------------- |
+| Windows dev (x86) | `onnx` / `openvino`                 | TF/Keras (CPU)            | mock           | ✅ verified onnx + OCR |
+| Jetson Orin       | `trt` (FP16, via `export_tensorrt`) | TF/Keras (CPU, throttled) | mavlink / ros2 | Jetson-only            |
 
 ---
 

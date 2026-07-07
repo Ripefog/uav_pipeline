@@ -25,6 +25,9 @@ onnxruntime>=1.15
 fast-plate-ocr>=0.1
 tensorflow>=2.15          # `tensorflow-cpu` on Windows-native (no GPU there either way)
 
+# ---- Face (optional; enable face.enabled in config) ----
+turbovec==0.8.0
+
 # ---- Jetson-only (install via JetPack SDK / apt, NOT pip where possible) ----
 # tensorrt        # matches the JetPack-bundled version
 # pycuda          # pip install pycuda (builds against system CUDA)
