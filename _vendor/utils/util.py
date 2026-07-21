@@ -186,6 +186,32 @@ def non_max_suppression_v26(outputs, confidence_threshold=0.001, iou_threshold=0
     return result
 
 
+def non_max_suppression_yolox(outputs, confidence_threshold=0.001, iou_threshold=0.65):
+    """NMS for a decoded YOLOX head: [batch, anchors, 4+1+nc] =
+    [cx, cy, w, h, obj_conf, cls_conf...] — box already in absolute pixel
+    coords (decode_in_inference=True), obj/cls already sigmoid probabilities.
+    Score = obj_conf * cls_conf (YOLOX has a separate objectness channel that
+    the DFL/v8-style head above does not)."""
+    max_det = 300
+    max_wh = 7680
+    batch_size = outputs.shape[0]
+    result = [torch.zeros((0, 6), device=outputs.device)] * batch_size
+    for i, x in enumerate(outputs):
+        box = wh2xy(x[:, :4])
+        scores = x[:, 4:5] * x[:, 5:]
+        conf, cls = scores.max(1, keepdim=True)
+        x = torch.cat((box, conf, cls.float()), 1)
+        x = x[conf.view(-1) > confidence_threshold]
+        if not x.shape[0]:
+            continue
+        x = x[x[:, 4].argsort(descending=True)[:30000]]
+        c = x[:, 5:6] * max_wh
+        boxes, scores = x[:, :4] + c, x[:, 4]
+        indices = torchvision.ops.nms(boxes, scores, iou_threshold)[:max_det]
+        result[i] = x[indices]
+    return result
+
+
 def smooth(y, f=0.1):
     # Box filter of fraction f
     nf = round(len(y) * f * 2) // 2 + 1  # number of filter elements (must be odd)

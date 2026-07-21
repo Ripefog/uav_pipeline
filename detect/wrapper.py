@@ -46,7 +46,8 @@ class UnifiedDetector:
         self.names = load_names(cfg.primary.names_yaml)
         self.coi = tuple(cfg.classes_of_interest)
         self.backend = build_backend(
-            cfg.backend, model_path, imgsz=cfg.imgsz, device=cfg.device, fp16=cfg.fp16)
+            cfg.backend, model_path, imgsz=cfg.imgsz, device=cfg.device, fp16=cfg.fp16,
+            preprocess=cfg.preprocess)
         self._plate_backend = None
 
     # -- primary detection --------------------------------------------------

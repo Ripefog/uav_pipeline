@@ -1,10 +1,12 @@
-"""Shared postprocessing — NMS (auto-select v26 vs DFL head) + inverse mapping.
+"""Shared postprocessing — NMS (auto-select v26 / DFL / YOLOX head) + inverse mapping.
 
-Uses the vendored ``utils.util.non_max_suppression`` / ``..._v26`` (verbatim
-copies of the original YOLO helpers, under ``_vendor/utils/util.py``) so
-numerics are byte-identical to the standalone infer scripts. The head format is
-auto-detected exactly as the originals do: last-dim == 6 => HybridYOLO/v26
-``[batch, k, 6]`` head, else DFL ``[batch, 4+nc, anchors]`` head.
+Uses the vendored ``utils.util.non_max_suppression*`` (verbatim copies of the
+original YOLO helpers, under ``_vendor/utils/util.py``) so numerics are
+byte-identical to the standalone infer scripts. The head format is
+auto-detected from shape: last-dim == 6 => HybridYOLO/v26 ``[batch, k, 6]``
+head; last-dim < second-to-last (channels-last, with a separate objectness
+channel) => decoded YOLOX head ``[batch, anchors, 4+1+nc]``; else DFL/v8
+``[batch, 4+nc, anchors]`` (channels-first, no objectness).
 """
 from typing import Dict, List, Tuple
 
@@ -20,6 +22,14 @@ from utils import util  # noqa: E402  (vendored via uav_pipeline._paths._vendor)
 from ..contracts import Detection
 
 
+def _run_nms(out, conf: float, iou: float):
+    if out.shape[-1] == 6:
+        return util.non_max_suppression_v26(out, conf, iou)
+    if out.shape[-1] < out.shape[-2]:
+        return util.non_max_suppression_yolox(out, conf, iou)
+    return util.non_max_suppression(out, confidence_threshold=conf, iou_threshold=iou)
+
+
 def postprocess(raw_output, conf: float, iou: float) -> np.ndarray:
     """Run auto-selected NMS on a single-batch raw model output.
 
@@ -33,10 +43,7 @@ def postprocess(raw_output, conf: float, iou: float) -> np.ndarray:
     else:
         out = torch.from_numpy(np.asarray(raw_output))
 
-    if out.dim() == 3 and out.shape[-1] == 6:
-        dets = util.non_max_suppression_v26(out, conf, iou)
-    else:
-        dets = util.non_max_suppression(out, confidence_threshold=conf, iou_threshold=iou)
+    dets = _run_nms(out, conf, iou)
 
     d = dets[0]
     if d is None or len(d) == 0:
@@ -54,10 +61,7 @@ def postprocess_batch(raw_output, conf: float, iou: float) -> List[np.ndarray]:
     out = raw_output if isinstance(raw_output, torch.Tensor) \
         else torch.from_numpy(np.asarray(raw_output))
 
-    if out.dim() == 3 and out.shape[-1] == 6:
-        dets = util.non_max_suppression_v26(out, conf, iou)
-    else:
-        dets = util.non_max_suppression(out, confidence_threshold=conf, iou_threshold=iou)
+    dets = _run_nms(out, conf, iou)
 
     results: List[np.ndarray] = []
     for d in dets:

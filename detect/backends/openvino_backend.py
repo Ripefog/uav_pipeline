@@ -2,14 +2,14 @@
 import numpy as np
 
 from ..base import DetectorBackend
-from ..preprocess import letterbox, to_chw_rgb_float
+from ..preprocess import letterbox, letterbox_yolox, to_chw_bgr_float, to_chw_rgb_float
 
 
 class OpenVINOBackend(DetectorBackend):
     backend_name = "openvino"
 
-    def __init__(self, model_path, imgsz=640, device="", fp16=False):
-        super().__init__(model_path, imgsz, device, fp16)
+    def __init__(self, model_path, imgsz=640, device="", fp16=False, preprocess="ultralytics"):
+        super().__init__(model_path, imgsz, device, fp16, preprocess)
         import openvino as ov
 
         self._ov = ov
@@ -32,8 +32,12 @@ class OpenVINOBackend(DetectorBackend):
             self._batch = 1
 
     def _preprocess(self, img0):
-        img_lb, ratio, pad = letterbox(img0, self.imgsz)
-        sample = to_chw_rgb_float(img_lb, half=False)        # float32 /255
+        if self.preprocess == "yolox":
+            img_lb, ratio, pad = letterbox_yolox(img0, self.imgsz)
+            sample = to_chw_bgr_float(img_lb, half=False)     # float32, BGR, 0-255
+        else:
+            img_lb, ratio, pad = letterbox(img0, self.imgsz)
+            sample = to_chw_rgb_float(img_lb, half=False)     # float32 /255
         return sample[None, ...], ratio, pad                  # [1,3,H,W]
 
     def _infer(self, model_input):

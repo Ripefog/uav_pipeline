@@ -24,8 +24,8 @@ def _volume(shape):
 class TensorRTBackend(DetectorBackend):
     backend_name = "trt"
 
-    def __init__(self, engine_path, imgsz=640, device="", fp16=True):
-        super().__init__(engine_path, imgsz, device, fp16)
+    def __init__(self, engine_path, imgsz=640, device="", fp16=True, preprocess="ultralytics"):
+        super().__init__(engine_path, imgsz, device, fp16, preprocess)
         import tensorrt as trt
         import pycuda.driver as cuda
         import pycuda.autoinit  # noqa: F401  (creates the primary CUDA context)

@@ -71,6 +71,7 @@ class Pipeline:
         # ---- state ----
         self.fps = 0.0
         self._prev_ts: Optional[float] = None
+        self._t_start: Optional[float] = None   # wall-clock start for throughput
         self._stop = False
         self._n_frames = 0
 
@@ -146,7 +147,7 @@ class Pipeline:
         self.controller.send(command)
 
         # timing
-        self._update_fps(meta.ts)
+        self._update_fps()
 
         return FrameContext(
             meta=meta, frame=frame,
@@ -200,11 +201,21 @@ class Pipeline:
             stats["motion"] = f"{bar} {sev:.2f}"
         return stats
 
-    def _update_fps(self, ts: float):
-        if self._prev_ts is not None and ts > self._prev_ts:
-            instant = 1.0 / max(1e-6, ts - self._prev_ts)
-            self.fps = instant if self.fps == 0.0 else 0.9 * self.fps + 0.1 * instant
-        self._prev_ts = ts
+    def _update_fps(self):
+        # True end-to-end throughput = frames / wall-clock elapsed since start.
+        # We do NOT use meta.ts (frame *read* time) nor a per-frame instant EMA:
+        # in batch mode the detector runs once per N frames *outside* the
+        # per-frame loop, so a per-frame delta would miss the detection cost and
+        # report a bogus number (~1000 from read-stamps, ~152 from track-only
+        # time). A cumulative average over wall-clock includes detection and is
+        # correct in both single-frame and batch modes.
+        now = time.monotonic()
+        if self._t_start is None:
+            self._t_start = now
+            return
+        elapsed = now - self._t_start
+        if elapsed > 0:
+            self.fps = self._n_frames / elapsed
 
     # ------------------------------------------------------------------ #
     def close(self):

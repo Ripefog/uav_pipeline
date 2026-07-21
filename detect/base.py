@@ -18,11 +18,12 @@ class DetectorBackend(ABC):
     backend_name: str = "base"
 
     def __init__(self, model_path: str, imgsz: int = 640,
-                 device: str = "", fp16: bool = False):
+                 device: str = "", fp16: bool = False, preprocess: str = "ultralytics"):
         self.model_path = model_path
         self.imgsz = imgsz
         self.device = device
         self.fp16 = fp16
+        self.preprocess = preprocess  # "ultralytics" | "yolox" -> which letterbox/normalize convention
 
     @abstractmethod
     def _preprocess(self, img0):
@@ -34,22 +35,23 @@ class DetectorBackend(ABC):
 
 
 def build_backend(backend: str, model_path: str, imgsz: int = 640,
-                  device: str = "", fp16: bool = False) -> DetectorBackend:
+                  device: str = "", fp16: bool = False,
+                  preprocess: str = "ultralytics") -> DetectorBackend:
     """Instantiate a backend by name. Imports are lazy so unused backends
     (e.g. TensorRT on a Windows dev box) don't drag in Jetson-only deps."""
     backend = backend.lower().strip()
     if backend == "openvino":
         from .backends.openvino_backend import OpenVINOBackend
-        return OpenVINOBackend(model_path, imgsz, device, fp16)
+        return OpenVINOBackend(model_path, imgsz, device, fp16, preprocess)
     if backend == "onnx":
         from .backends.onnx_backend import ONNXBackend
-        return ONNXBackend(model_path, imgsz, device, fp16)
+        return ONNXBackend(model_path, imgsz, device, fp16, preprocess)
     if backend == "torch":
         from .backends.torch_backend import TorchBackend
-        return TorchBackend(model_path, imgsz, device, fp16)
+        return TorchBackend(model_path, imgsz, device, fp16, preprocess)
     if backend == "trt":
         from .backends.trt_backend import TensorRTBackend
-        return TensorRTBackend(model_path, imgsz, device, fp16)
+        return TensorRTBackend(model_path, imgsz, device, fp16, preprocess)
     raise ValueError(
         f"Unknown detector backend '{backend}'. "
         f"Expected one of: openvino | onnx | torch | trt")

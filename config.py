@@ -66,6 +66,7 @@ class PrimaryModelCfg:
 @dataclass
 class DetectorCfg:
     backend: str = "openvino"                 # torch | onnx | openvino | trt
+    preprocess: str = "ultralytics"            # ultralytics (RGB/255/center-pad) | yolox (BGR/0-255/top-left-pad)
     imgsz: int = 640
     conf: float = 0.25
     iou: float = 0.45

@@ -48,8 +48,8 @@ def _load_model(model_path, device):
 class TorchBackend(DetectorBackend):
     backend_name = "torch"
 
-    def __init__(self, model_path, imgsz=640, device="", fp16=False):
-        super().__init__(model_path, imgsz, device, fp16)
+    def __init__(self, model_path, imgsz=640, device="", fp16=False, preprocess="ultralytics"):
+        super().__init__(model_path, imgsz, device, fp16, preprocess)
         import torch
         self._torch = torch
         dev = (device or ("cuda" if torch.cuda.is_available() else "cpu"))

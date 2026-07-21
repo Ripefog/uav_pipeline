@@ -1,4 +1,5 @@
-# Local run — ONNX backend (CPU), batch=16 (gom 16 frame / 1 infer), OCR off.
+# Local run — ONNX backend, batch=16 (gom 16 frame / 1 infer), OCR off.
+# primary = YOLOX-X (fixed 736x1280 input) -> device/preprocess/imgsz phải khớp.
 source:
   type: video
   path: ""
@@ -7,15 +8,16 @@ source:
 
 detector:
   backend: onnx
-  device: ""
+  device: cuda
+  preprocess: yolox
   batch: 16
-  imgsz: 640
+  imgsz: [736, 1280]
   conf: 0.25
   iou: 0.45
   fp16: false
   classes_of_interest: []
   primary:
-    onnx: weights/best_yolov26n_qat_int8_static.onnx
+    onnx: weights/best_yoloxx.onnx
     names_yaml: weights/names.yaml
 
 ocr:
