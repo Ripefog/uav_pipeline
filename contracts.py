@@ -194,4 +194,6 @@ class FrameContext:
     follow_state: FollowState = field(default_factory=FollowState)
     command: Optional[Command] = None
     fps: float = 0.0
+    fps_detect: float = 0.0
+    fps_pipeline: float = 0.0
     extra_stats: Dict[str, str] = field(default_factory=dict)

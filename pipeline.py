@@ -69,9 +69,13 @@ class Pipeline:
             self.sinks.append(ControlLogSink(config.sinks.control_log))
 
         # ---- state ----
-        self.fps = 0.0
+        self.fps = 0.0            # full pipeline incl. video sink write
+        self.fps_detect = 0.0     # detector inference only
+        self.fps_pipeline = 0.0   # detect+track+follow+jsonl sinks, excl. video write
         self._prev_ts: Optional[float] = None
         self._t_start: Optional[float] = None   # wall-clock start for throughput
+        self._t_detect_total = 0.0
+        self._t_video_total = 0.0
         self._stop = False
         self._n_frames = 0
 
@@ -93,8 +97,7 @@ class Pipeline:
                     if self._stop:
                         break
                     ctx = self.process_frame(meta, frame)
-                    for s in self.sinks:
-                        s.write(ctx)
+                    self._write_sinks(ctx)
         except KeyboardInterrupt:
             print("\n[pipeline] interrupted by user")
         finally:
@@ -118,20 +121,37 @@ class Pipeline:
 
     def _flush_batch(self, buf):
         frames = [f for _, f in buf]
+        t0 = time.monotonic()
         det_lists = self.detector.detect_batch(frames)
+        self._t_detect_total += time.monotonic() - t0
         for (meta, frame), detections in zip(buf, det_lists):
             ctx = self.process_frame(meta, frame, detections=detections)
-            for s in self.sinks:
+            self._write_sinks(ctx)
+
+    def _write_sinks(self, ctx: FrameContext):
+        for s in self.sinks:
+            if isinstance(s, HUDAnnotatedSink):
+                t0 = time.monotonic()
+                s.write(ctx)
+                self._t_video_total += time.monotonic() - t0
+            else:
                 s.write(ctx)
 
     # ------------------------------------------------------------------ #
     def process_frame(self, meta: FrameMeta, frame: np.ndarray,
                       detections: Optional[List[Detection]] = None) -> FrameContext:
         self._n_frames += 1
+        total = getattr(self.source, "total_frames", None)
+        if self._n_frames == 1:
+            h, w = frame.shape[:2]
+            print(f"[pipeline] resolution={w}x{h}")
+        print(f"[pipeline] frame {self._n_frames}/{total if total else '?'}")
 
         # detect (primary, + optional plate detector)
         if detections is None:
+            t0 = time.monotonic()
             detections = self.detector.detect(frame)
+            self._t_detect_total += time.monotonic() - t0
         plates = self.detector.detect_plates(frame) if self.detector.plate_enabled else []
 
         # track
@@ -153,7 +173,8 @@ class Pipeline:
             meta=meta, frame=frame,
             detections=detections, tracks=tracks,
             follow_state=follow_state, command=command,
-            fps=self.fps, extra_stats=self._extra_stats(),
+            fps=self.fps, fps_detect=self.fps_detect, fps_pipeline=self.fps_pipeline,
+            extra_stats=self._extra_stats(),
         )
 
     # ------------------------------------------------------------------ #
@@ -216,6 +237,11 @@ class Pipeline:
         elapsed = now - self._t_start
         if elapsed > 0:
             self.fps = self._n_frames / elapsed
+        if self._t_detect_total > 0:
+            self.fps_detect = self._n_frames / self._t_detect_total
+        novideo = elapsed - self._t_video_total
+        if novideo > 0:
+            self.fps_pipeline = self._n_frames / novideo
 
     # ------------------------------------------------------------------ #
     def close(self):
@@ -232,7 +258,9 @@ class Pipeline:
 
         print("-" * 60)
         print(f"[pipeline] frames processed : {self._n_frames}")
-        print(f"[pipeline] avg FPS          : {self.fps:.1f}")
+        print(f"[pipeline] avg FPS (full)   : {self.fps:.1f}")
+        print(f"[pipeline] avg FPS (detect) : {self.fps_detect:.1f}")
+        print(f"[pipeline] avg FPS (pipe)   : {self.fps_pipeline:.1f}  (detect+track+follow+jsonl, excl. video write)")
         print(f"[pipeline] {self.tracker.get_stats()}")
         print("-" * 60)
 

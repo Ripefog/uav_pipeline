@@ -1,9 +1,12 @@
-"""TensorRT backend (Jetson Orin, batch=1, static shape).
+"""TensorRT backend (Jetson Orin, static shape).
 
-Loads a serialized ``.engine`` (built by ``scripts/export_tensorrt.py``) and
-runs single-frame inference. Targets the TensorRT 10 tensor-address API
-(``set_tensor_address`` + ``execute_async_v3``) as used by JetPack 6, with a
-fallback to the TRT 8 binding-index API (``execute_async_v2``).
+Loads a serialized ``.engine`` (built by ``scripts/export_tensorrt.py``).
+Fixed-batch engines (e.g. batch=16, matching ``detector.batch``) are
+supported the same way as ``OpenVINOBackend``: a single frame is tiled to
+fill the batch and the result is sliced back down. Targets the TensorRT 10
+tensor-address API (``set_tensor_address`` + ``execute_async_v3``) as used by
+JetPack 6, with a fallback to the TRT 8 binding-index API
+(``execute_async_v2``).
 
 Cannot be exercised on a Windows dev box (no TRT/pycuda) — it is imported
 lazily via ``build_backend('trt')`` only on Jetson.
@@ -11,7 +14,7 @@ lazily via ``build_backend('trt')`` only on Jetson.
 import numpy as np
 
 from ..base import DetectorBackend
-from ..preprocess import letterbox, to_chw_rgb_float
+from ..preprocess import letterbox, letterbox_yolox, to_chw_bgr_float, to_chw_rgb_float
 
 
 def _volume(shape):
@@ -52,7 +55,9 @@ class TensorRTBackend(DetectorBackend):
         trt = self._trt
         cuda = self._cuda
         ctx = self.context
-        # Fix the input shape so dynamic output dims resolve.
+        # Fixed shape baked into the engine's optimization profile (batch,3,H,W)
+        # — read it back rather than assuming batch=1, so a batch=16 engine
+        # (matching detector.batch) works the same way as OpenVINOBackend.
         if self._trt10:
             names = list(self.engine)  # tensor names
             self.input_name = None
@@ -60,7 +65,9 @@ class TensorRTBackend(DetectorBackend):
                 if self.engine.get_tensor_mode(n) == trt.TensorIOMode.INPUT:
                     self.input_name = n
                     break
-            ctx.set_input_shape(self.input_name, (1, 3, self.imgsz, self.imgsz))
+            in_shape = tuple(self.engine.get_tensor_profile_shape(self.input_name, 0)[1])
+            self._batch = in_shape[0]
+            ctx.set_input_shape(self.input_name, in_shape)
             self._buf = {}
             self._dev = {}
             for n in names:
@@ -81,7 +88,8 @@ class TensorRTBackend(DetectorBackend):
                 shape = tuple(self.engine.get_binding_shape(i))
                 if is_input:
                     self.input_name = name
-                    shape = (1, 3, self.imgsz, self.imgsz)
+                    shape = tuple(self.engine.get_profile_shape(0, i)[1])
+                    self._batch = shape[0]
                     ctx.set_binding_shape(i, shape)
                 else:
                     shape = tuple(ctx.get_binding_shape(i))
@@ -106,27 +114,40 @@ class TensorRTBackend(DetectorBackend):
 
     # ------------------------------------------------------------------ #
     def _preprocess(self, img0):
-        img_lb, ratio, pad = letterbox(img0, self.imgsz)
-        sample = to_chw_rgb_float(img_lb, half=self.fp16)     # fp16/fp32 /255
-        return sample[None, ...], ratio, pad                   # [1,3,H,W]
+        if self.preprocess == "yolox":
+            img_lb, ratio, pad = letterbox_yolox(img0, self.imgsz)
+            sample = to_chw_bgr_float(img_lb, half=self.fp16)  # fp16/fp32, BGR, 0-255
+        else:
+            img_lb, ratio, pad = letterbox(img0, self.imgsz)
+            sample = to_chw_rgb_float(img_lb, half=self.fp16)  # fp16/fp32 /255
+        return sample[None, ...], ratio, pad                    # [1,3,H,W]
 
     def _infer(self, model_input):
         cuda = self._cuda
         ctx = self.context
         in_name = self.input_name
+
+        n = model_input.shape[0]
+        if self._batch > n:                        # pad single frame up to fixed batch
+            pad = np.repeat(model_input[:1], self._batch - n, axis=0)
+            model_input = np.concatenate([model_input, pad], axis=0)
         np.copyto(self._buf[in_name], model_input)
+
+        # pycuda's Stream.handle is a callable method on some versions, a
+        # plain int attribute on others (2026.1+) — support both.
+        stream_handle = self.stream.handle() if callable(self.stream.handle) else self.stream.handle
 
         if self._trt10:
             cuda.memcpy_htod_async(self._dev[in_name], self._buf[in_name], self.stream)
-            ctx.execute_async_v3(self.stream.handle())
+            ctx.execute_async_v3(stream_handle)
             out_name = self._output_name
             cuda.memcpy_dtoh_async(self._buf[out_name], self._dev[out_name], self.stream)
         else:
             in_idx = self.engine.get_binding_index(in_name)
             cuda.memcpy_htod_async(self._dev[in_idx], self._buf[in_name], self.stream)
-            ctx.execute_async_v2(self.bindings, self.stream.handle())
+            ctx.execute_async_v2(self.bindings, stream_handle)
             out_name = self._output_name
             out_idx = self.engine.get_binding_index(out_name)
             cuda.memcpy_dtoh_async(self._dev[out_idx], self._buf[out_name], self.stream)
         self.stream.synchronize()
-        return self._buf[self._output_name]
+        return self._buf[self._output_name][:n]     # drop the padded-frame rows

@@ -1,9 +1,14 @@
 """export_tensorrt — build a serialized TensorRT engine from an ONNX model.
 
-Targets TensorRT 10 (JetPack 6 / Orin). Produces a static batch=1 engine at the
-detector's fixed input size. FP16 by default; INT8 only with a calibration
+Targets TensorRT 10 (JetPack 6 / Orin). Produces a static-shape engine (fixed
+batch + imgsz — the TRT backend assumes static shapes). FP16 by default;
+``--no-fp16`` for full precision (FP32). INT8 only with a calibration
 directory (the single biggest accuracy risk — supply your own representative
 crops).
+
+``--imgsz`` takes one value (square) or two (``H W``, e.g. a non-square
+YOLOX export). ``--batch`` bakes a fixed batch size (e.g. 16, matching
+``detector.batch`` in the config) into the optimization profile.
 
 Prereq: an ONNX model (opset 12, fixed imgsz). A ready one ships in
 ``weights/best_yolov26n_qat_int8_static.onnx``; export your own from a ``.pt``
@@ -14,6 +19,12 @@ Then:
         --onnx uav_pipeline/weights/best_yolov26n_qat_int8_static.onnx \\
         --engine uav_pipeline/weights/best_yolov26n_qat_int8_static.engine \\
         --imgsz 640 --fp16
+
+    # YOLOX-X: non-square imgsz, fixed batch=16, full precision
+    python -m uav_pipeline.scripts.export_tensorrt \\
+        --onnx uav_pipeline/weights/best_yoloxx.onnx \\
+        --engine uav_pipeline/weights/best_yoloxx.engine \\
+        --imgsz 736 1280 --batch 16 --no-fp16
 """
 import argparse
 import os
@@ -39,7 +50,7 @@ class _EntropyCalibrator:
         import tensorrt as trt
 
         self._np = np
-        self.imgsz = imgsz
+        self.h, self.w = imgsz
         self.cache = cache
         self.batch_size = 1
         self.n_samples = 500
@@ -52,7 +63,7 @@ class _EntropyCalibrator:
                            for f in os.listdir(calib_dir) if f.lower().endswith(exts)]
         self._idx = 0
 
-        self._device = cuda.mem_alloc(self.batch_size * 3 * imgsz * imgsz * 4)
+        self._device = cuda.mem_alloc(self.batch_size * 3 * self.h * self.w * 4)
         self.trt = trt
 
     def _read_sample(self):
@@ -62,10 +73,10 @@ class _EntropyCalibrator:
             img = cv2.imread(self._files[self._idx])
             self._idx += 1
             if img is None:
-                img = np.zeros((self.imgsz, self.imgsz, 3), np.uint8)
+                img = np.zeros((self.h, self.w, 3), np.uint8)
         else:
-            img = np.random.randint(0, 256, (self.imgsz, self.imgsz, 3), np.uint8)
-        img = cv2.resize(img, (self.imgsz, self.imgsz))
+            img = np.random.randint(0, 256, (self.h, self.w, 3), np.uint8)
+        img = cv2.resize(img, (self.w, self.h))
         sample = img[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
         return np.ascontiguousarray(sample[None, ...])
 
@@ -91,12 +102,17 @@ class _EntropyCalibrator:
             f.write(cache)
 
 
-def build_engine(onnx, engine, imgsz, fp16, int8, calib_dir, workspace_gb):
+def build_engine(onnx, engine, imgsz, batch, fp16, int8, calib_dir, workspace_gb):
     import tensorrt as trt
 
+    h, w = imgsz
     logger = trt.Logger(trt.Logger.WARNING)
     builder = trt.Builder(logger)
-    network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
+    # TRT 10 (Jetson/JetPack 6) requires the EXPLICIT_BATCH flag; TRT 11+
+    # dropped it (explicit batch is the only mode, flags default to 0).
+    flags = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+             if hasattr(trt.NetworkDefinitionCreationFlag, "EXPLICIT_BATCH") else 0)
+    network = builder.create_network(flags)
     parser = trt.OnnxParser(network, logger)
 
     with open(onnx, "rb") as f:
@@ -114,29 +130,33 @@ def build_engine(onnx, engine, imgsz, fp16, int8, calib_dir, workspace_gb):
         config.int8_calibrator = _EntropyCalibrator(calib_dir, imgsz)
         print("[export] INT8 enabled — using calibrator (use real crops for accuracy)")
 
-    # Force static batch=1 (the TRT backend assumes static shapes).
+    # Force a static shape (the TRT backend assumes static shapes): fixed
+    # batch (e.g. 16, matching detector.batch) at the fixed H/W.
     profile = builder.create_optimization_profile()
     in_name = network.get_input(0).name
-    shape = (1, 3, imgsz, imgsz)
+    shape = (batch, 3, h, w)
     profile.set_shape(in_name, shape, shape, shape)
     config.add_optimization_profile(profile)
 
     print(f"[export] building engine: {onnx} -> {engine} "
-          f"(imgsz={imgsz}, fp16={fp16}, int8={int8}, ws={workspace_gb}GB)")
+          f"(imgsz={h}x{w}, batch={batch}, fp16={fp16}, int8={int8}, ws={workspace_gb}GB)")
     serialized = builder.build_serialized_network(network, config)
     if serialized is None:
         raise RuntimeError("Engine build returned None — check TRT logs.")
     os.makedirs(os.path.dirname(engine) or ".", exist_ok=True)
     with open(engine, "wb") as f:
         f.write(serialized)
-    print(f"[export] done -> {engine} ({len(serialized) / 1e6:.1f} MB)")
+    print(f"[export] done -> {engine} ({serialized.nbytes / 1e6:.1f} MB)")
 
 
 def main():
     ap = argparse.ArgumentParser(description="Export ONNX -> TensorRT engine")
     ap.add_argument("--onnx", required=True)
     ap.add_argument("--engine", required=True)
-    ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--imgsz", type=int, nargs="+", default=[640],
+                    help="Square: --imgsz 640. Non-square: --imgsz H W (e.g. 736 1280).")
+    ap.add_argument("--batch", type=int, default=1,
+                    help="Fixed batch size baked into the engine (e.g. 16, matching detector.batch).")
     ap.add_argument("--fp16", action="store_true", default=True)
     ap.add_argument("--no-fp16", dest="fp16", action="store_false")
     ap.add_argument("--int8", action="store_true")
@@ -144,7 +164,14 @@ def main():
     ap.add_argument("--workspace-gb", type=float, default=4.0)
     args = ap.parse_args()
 
-    build_engine(args.onnx, args.engine, args.imgsz,
+    if len(args.imgsz) == 1:
+        imgsz = (args.imgsz[0], args.imgsz[0])
+    elif len(args.imgsz) == 2:
+        imgsz = (args.imgsz[0], args.imgsz[1])
+    else:
+        raise ValueError("--imgsz takes 1 (square) or 2 (H W) values")
+
+    build_engine(args.onnx, args.engine, imgsz, args.batch,
                  args.fp16, args.int8, args.calib_dir, args.workspace_gb)
 
 

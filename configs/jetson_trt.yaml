@@ -1,26 +1,33 @@
-# Jetson Orin preset — TensorRT FP16 engine + GStreamer CSI/RTSP.
-# Prereq: build the engine first, e.g.
+# Jetson Orin preset — TensorRT engine (YOLOX-X, full precision, batch=4)
+# + GStreamer CSI/RTSP. Prereq: build the engine on the Jetson itself (engines
+# are per-device/per-arch, not portable from an x86_64 dev box), e.g.
 #   python -m uav_pipeline.scripts.export_tensorrt \
-#       --onnx weights/best_yolov26n_qat_int8_static.onnx \
-#       --engine weights/best_yolov26n_qat_int8_static.engine --imgsz 640 --fp16
+#       --onnx weights/best_yoloxx.onnx \
+#       --engine weights/best_yoloxx.engine \
+#       --imgsz 736 1280 --batch 4 --no-fp16
+# batch=16 OOMs on an 8GB Orin NX (full precision + 736x1280 needs more
+# activation memory than fits) — batch must match export --batch exactly.
 
 source:
   type: gstreamer
   # Example: RTSP from a gimbal cam. Replace with your pipeline.
   gstreamer: "rtspsrc location=rtsp://192.168.1.10/stream latency=0 ! rtph264depay ! h264parse ! nvv4l2decoder ! nvvidconv ! video/x-raw,BGR ! appsink drop=1"
+  loop: false          # false for finite sources (test video/image_dir); RTSP live doesn't loop anyway
   fps: 30
   max_frames: 0
 
 detector:
   backend: trt
   device: ""           # TRT uses the primary GPU
-  imgsz: 640
+  preprocess: yolox    # BGR, no /255, top-left pad (not the Ultralytics convention)
+  batch: 4             # must match the engine's fixed batch (export --batch)
+  imgsz: [736, 1280]   # must match the engine's fixed H/W (export --imgsz)
   conf: 0.25
   iou: 0.45
-  fp16: true
+  fp16: false          # full-precision engine (export --no-fp16)
   classes_of_interest: []
   primary:
-    trt: weights/best_yolov26n_qat_int8_static.engine
+    trt: weights/best_yoloxx.engine
     names_yaml: weights/names.yaml
 
 ocr:
@@ -63,6 +70,6 @@ controller:
   mavlink: {connection: "udpin:0.0.0.0:14550", system_id: 1}
 
 sinks:
-  video:     {enabled: true, path: output/pipeline.mp4, codec: avc1, fps: 30, draw: true}
+  video:     {enabled: true, path: output/pipeline.mp4, codec: mp4v, fps: 30, draw: true}
   telemetry: {enabled: true, path: output/telemetry.jsonl, csv_summary: output/telemetry_summary.csv}
   control_log: {enabled: true, path: output/commands.jsonl}

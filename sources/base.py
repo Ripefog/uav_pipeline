@@ -12,6 +12,7 @@ class FrameSource(ABC):
 
     fps: float = 30.0
     shape: Optional[Tuple[int, int]] = None   # (H, W) once known
+    total_frames: Optional[int] = None        # None = unknown/unbounded (webcam, live stream)
 
     @abstractmethod
     def __iter__(self) -> Iterator[Tuple[FrameMeta, np.ndarray]]:

@@ -24,6 +24,7 @@ class ImageDirSource(FrameSource):
         if not self.files:
             raise RuntimeError(f"No images in {path}")
         self.shape: Optional[Tuple[int, int]] = None
+        self.total_frames = min(len(self.files), max_frames) if max_frames else len(self.files)
 
     def __iter__(self) -> Iterator[Tuple[FrameMeta, object]]:
         idx = 0

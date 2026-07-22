@@ -119,6 +119,7 @@ class HUDAnnotatedSink(Sink):
     def _draw_hud(self, frame, ctx: FrameContext):
         lines = [
             f"FPS {ctx.fps:5.1f}  frame {ctx.meta.idx}",
+            f"FPS det {ctx.fps_detect:5.1f}  pipe {ctx.fps_pipeline:5.1f}",
             f"Det {len(ctx.detections)}  Trk {len(ctx.tracks)}",
             f"Mode {ctx.follow_state.mode}  tgt {ctx.follow_state.target_id}",
         ]

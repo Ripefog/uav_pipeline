@@ -25,6 +25,11 @@ class VideoSource(FrameSource):
         self.fps = fps if fps and fps > 0 else fps_hint
         self.shape: Optional[Tuple[int, int]] = None
 
+        count = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)  # 0/-1 for live streams (gstreamer/RTSP)
+        self.total_frames = int(count) if count and count > 0 else None
+        if max_frames:
+            self.total_frames = min(self.total_frames, max_frames) if self.total_frames else max_frames
+
     def __iter__(self) -> Iterator[Tuple[FrameMeta, np.ndarray]]:
         idx = 0
         while True:
