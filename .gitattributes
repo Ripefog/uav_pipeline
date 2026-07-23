@@ -3,3 +3,4 @@ weights/best_yoloxx.bin filter=lfs diff=lfs merge=lfs -text
 weights/best_yoloxx.onnx filter=lfs diff=lfs merge=lfs -text
 weights/best_yoloxx.pt filter=lfs diff=lfs merge=lfs -text
 weights/best_yolov26l.bin filter=lfs diff=lfs merge=lfs -text
+weights/best_yoloxs.onnx filter=lfs diff=lfs merge=lfs -text

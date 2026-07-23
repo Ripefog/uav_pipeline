@@ -5,12 +5,14 @@
 uv venv .venv --system-site-packages
 source .venv/bin/activate && uv pip install -r requirements.txt
 
-# Jetson — export TensorRT engine (best_yoloxx, full precision, batch=4)
+# Jetson — export TensorRT engine (best_yoloxs, full precision, batch=16)
 # Phải chạy TRÊN Jetson: engine build ở x86_64/RTX 5080 KHÔNG dùng được trên
 # Jetson (khác kiến trúc CPU aarch64 vs x86_64, khác GPU arch sm_87 vs sm_120).
-# batch=16 OOM trên Orin NX 8GB (full precision + 736x1280 quá nặng) -> batch=4.
+# yoloxs nhẹ hơn yoloxx (width 0.5/depth 0.33 vs 1.25/1.33) nên batch=16 nhiều
+# khả năng vẫn fit trong 8GB Orin NX -- nhưng chưa test thực tế, nếu OOM thì
+# giảm --batch xuống 8/4 (không cần đổi code, batch đã đọc từ engine runtime).
 source .venv/bin/activate
-PYTHONPATH=/home/ftel-uav python -m uav_pipeline.scripts.export_tensorrt --onnx weights/best_yoloxx.onnx --engine weights/best_yoloxx.engine --imgsz 736 1280 --batch 4 --no-fp16
+PYTHONPATH=/home/ftel-uav python -m uav_pipeline.scripts.export_tensorrt --onnx weights/best_yoloxs.onnx --engine weights/best_yoloxs.engine --imgsz 736 1280 --batch 16 --no-fp16
 
 # Jetson — chạy đúng sequence uav0000339_00001_v (input/VisDrone2019-MOT-val),
 # dùng engine vừa build (configs/jetson_trt.yaml, source override sang image_dir):
