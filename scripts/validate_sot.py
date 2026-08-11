@@ -855,6 +855,10 @@ def test_default_yaml_is_sot():
     assert cfg.validate() == [], cfg.validate()
     # openvino không có trong MCITrack/.venv -> default.yaml bật SOT thì phải onnx
     assert cfg.detector.backend == "onnx", cfg.detector.backend
+    # SOT chỉ có 1 track; follow.preferred_classes non-empty sẽ lọc mất track đó
+    # nếu class không nằm trong list (5/10 class VisDrone không có trong list MOT
+    # cũ) -> follow/selector.py trả None mỗi frame, drone không nhận lệnh nào.
+    assert cfg.follow.preferred_classes == [], cfg.follow.preferred_classes
     print("[ok] test_default_yaml_is_sot")
 
 

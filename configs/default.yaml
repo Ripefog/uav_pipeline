@@ -91,7 +91,8 @@ follow:
   enabled: true
   default_policy: highest_score_area   # highest_score_area | largest_area | nearest_center
   locked_id: null                      # int to stick to one target id
-  preferred_classes: [car, van, truck, bus, pedestrian]
+  preferred_classes: []      # SOT chỉ có 1 track; lọc theo class ở đây là tự bắn chân
+                             # (bỏ hết class không có trong list là mất mục tiêu duy nhất)
   target_area_norm: 0.12   # desired target_area / frame_area (controls forward PID)
   deadzone_px: 12.0
   lost_recovery_frames: 15 # coast on last command before braking
