@@ -14,16 +14,21 @@ source:
   max_frames: 0          # 0 = all
 
 detector:
-  backend: openvino      # torch | onnx | openvino | trt
-  device: ""             # "" auto; CPU / GPU (OpenVINO) ; cuda:0 (torch/onnx)
-  imgsz: 640
+  # SOT bật mặc định -> phải chạy trong MCITrack/.venv, mà env đó KHÔNG có
+  # openvino. Vì vậy default là onnx + YOLOX-X. Các config MOT (local_onnx_batch16,
+  # jetson_trt, local_trt_*) vẫn giữ backend riêng của chúng.
+  backend: onnx          # torch | onnx | openvino | trt
+  device: cpu            # ORT trong MCITrack/.venv chỉ có CPUExecutionProvider
+  preprocess: yolox      # ultralytics (RGB/255/center-pad) | yolox (BGR/0-255/top-left-pad)
+  imgsz: [736, 1280]
+  batch: 1
   conf: 0.25
   iou: 0.45
   fp16: false            # torch cuda half; trt fp16
   classes_of_interest: []  # [] = all classes; e.g. [0,3,5]
   primary:
     pt:       weights/best_yolov26n_qat_int8_static.pt
-    onnx:     weights/best_yolov26n_qat_int8_static.onnx
+    onnx:     weights/best_yoloxx.onnx
     openvino: weights/best_yolov26n_qat_int8_static.xml
     trt:      weights/best_yolov26n_qat_int8_static.engine
     names_yaml: weights/names.yaml
@@ -45,6 +50,7 @@ ocr:
     openvino: weights/yolov26n_qat_plate_int8.xml
 
 tracker:                 # faithful port of pratap424/visdrone_mot thresholds
+  enabled: false         # SOT và MOT loại trừ nhau; default.yaml chạy SOT
   high_conf: 0.4
   low_conf: 0.15
   iou: 0.3
@@ -61,6 +67,25 @@ tracker:                 # faithful port of pratap424/visdrone_mot thresholds
     match_ratio: 0.75    # Lowe ratio test
     ransac_thresh: 5.0
     min_matches: 20
+
+sot:                     # single object tracking (MCITrack) — loại trừ với tracker
+  enabled: true
+  mcitrack_root: /home/anlnm/UAV/MCITrack   # sys.path.insert, không copy code
+  config: mcitrack_l384                     # experiments/mcitrack/<config>.yaml
+  dataset_preset: uav                       # chọn preset UPT/UPH/INTER/MB
+  device: cuda:0                            # 'cuda' | 'cuda:N' (MCITrack cần GPU)
+  init_bbox: null         # [x,y,w,h] pixel ảnh gốc; null = detector lấy conf cao nhất
+  init_classes: []        # [] = theo detector.classes_of_interest
+  detect_every_frame: false  # false = detector chỉ chạy ở frame acquire/verify
+  on_lost: stop           # stop | reacquire (chỉ có tác dụng khi guard bật)
+  guard:                  # ngưỡng đã calibrate trên VisDrone — đừng đổi tuỳ tiện
+    enabled: false        # OFF = hành vi MCITrack gốc, không bao giờ LOST
+    gate: class           # class | family | presence
+    verify_every: 10
+    K: 3                  # chuỗi verify-MISS oan dài nhất đo được là 2
+    iou_gate: 0.3
+    jump:   {enabled: true, px: 90.0, area: 2.5, ref_width: 1904.0}
+    motion: {enabled: true, iou: 0.05, k: 2}
 
 follow:
   enabled: true
@@ -101,3 +126,6 @@ sinks:
   control_log:
     enabled: true
     path: output/commands.jsonl
+  sot_result:
+    enabled: true
+    path: output/sot_result.txt

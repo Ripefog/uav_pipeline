@@ -834,6 +834,41 @@ def test_telemetry_has_sot_field():
     print("[ok] test_telemetry_has_sot_field")
 
 
+def test_sot_config_yaml_loads_and_validates():
+    p = os.path.join(_CODE_ROOT, "uav_pipeline", "configs", "sot_mcitrack.yaml")
+    cfg = Config.from_yaml(p)
+    assert cfg.sot.enabled is True and cfg.tracker.enabled is False
+    assert cfg.validate() == [], cfg.validate()
+    # ORT trong MCITrack/.venv chỉ có CPUExecutionProvider -> phải khai cpu tường
+    # minh, nếu không numerics detector có thể lệch so với baseline đã đo.
+    assert cfg.detector.device == "cpu", cfg.detector.device
+    assert cfg.detector.backend == "onnx" and cfg.detector.preprocess == "yolox"
+    assert cfg.detector.primary.onnx.endswith("best_yoloxx.onnx")
+    assert cfg.sot.guard.enabled is False, "guard mặc định OFF"
+    print("[ok] test_sot_config_yaml_loads_and_validates")
+
+
+def test_default_yaml_is_sot():
+    p = os.path.join(_CODE_ROOT, "uav_pipeline", "configs", "default.yaml")
+    cfg = Config.from_yaml(p)
+    assert cfg.sot.enabled is True and cfg.tracker.enabled is False
+    assert cfg.validate() == [], cfg.validate()
+    # openvino không có trong MCITrack/.venv -> default.yaml bật SOT thì phải onnx
+    assert cfg.detector.backend == "onnx", cfg.detector.backend
+    print("[ok] test_default_yaml_is_sot")
+
+
+def test_mot_configs_untouched():
+    for f in ["local_onnx_batch16", "jetson_trt", "local_trt_fp16",
+              "local_trt_fp32", "local_trt_int8", "local_openvino_batch16"]:
+        p = os.path.join(_CODE_ROOT, "uav_pipeline", "configs", f + ".yaml")
+        cfg = Config.from_yaml(p)
+        assert cfg.tracker.enabled is True, f
+        assert cfg.sot.enabled is False, f
+        assert cfg.validate() == [], (f, cfg.validate())
+    print("[ok] test_mot_configs_untouched")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
@@ -885,6 +920,9 @@ TESTS = [
     test_sot_prefetched_detections_not_detected_twice,
     test_pipeline_tracker_optional_when_sot_enabled,
     test_telemetry_has_sot_field,
+    test_sot_config_yaml_loads_and_validates,
+    test_default_yaml_is_sot,
+    test_mot_configs_untouched,
 ]
 
 

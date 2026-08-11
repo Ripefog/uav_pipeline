@@ -1,0 +1,76 @@
+# SOT (MCITrack) — chạy được ngay trong /home/anlnm/UAV/MCITrack/.venv.
+#
+#   cd /home/anlnm/UAV
+#   MCITrack/.venv/bin/python -m uav_pipeline.scripts.run_pipeline \
+#       --config uav_pipeline/configs/sot_mcitrack.yaml \
+#       --source uav_pipeline/input/VisDrone2019-MOT-val/sequences/uav0000339_00001_v \
+#       --source-type image_dir
+source:
+  type: image_dir
+  path: ""
+  loop: false          # loop + SOT = guard tính chuyển động sai ở chỗ nối
+  fps: 30
+
+detector:
+  backend: onnx
+  # CPU tường minh: onnxruntime trong MCITrack/.venv chỉ có CPUExecutionProvider
+  # (get_available_providers() -> Azure, CPU). Khai 'cuda' sẽ im lặng fallback về
+  # CPU và làm khó truy vết khi so numerics với baseline.
+  device: cpu
+  preprocess: yolox    # YOLOX-X: BGR, KHÔNG /255, pad 114 góc trên-trái
+  batch: 1             # SOT không dùng batch (detector chỉ chạy ở frame acquire/verify)
+  imgsz: [736, 1280]   # export fixed 736x1280
+  conf: 0.25
+  iou: 0.45
+  fp16: false
+  classes_of_interest: []
+  primary:
+    onnx: weights/best_yoloxx.onnx
+    names_yaml: weights/names.yaml
+
+ocr:
+  enabled: false
+
+tracker:
+  enabled: false       # MOT tắt: SOT và MOT loại trừ nhau
+
+sot:
+  enabled: true
+  mcitrack_root: /home/anlnm/UAV/MCITrack
+  config: mcitrack_l384
+  dataset_preset: uav
+  device: cuda:0       # đổi cuda:1 nếu GPU 0 đang bị chiếm
+  init_bbox: null      # [x,y,w,h]; null = detector lấy box conf cao nhất
+  init_classes: []     # vd [0,1] chỉ person; [] = mọi class
+  detect_every_frame: false
+  on_lost: stop        # stop | reacquire (chỉ có tác dụng khi guard bật)
+  guard:
+    enabled: false     # OFF = hành vi MCITrack gốc, không bao giờ LOST
+    gate: class        # class | family | presence
+    verify_every: 10
+    K: 3
+    iou_gate: 0.3
+    jump:   {enabled: true, px: 90.0, area: 2.5, ref_width: 1904.0}
+    motion: {enabled: true, iou: 0.05, k: 2}
+
+follow:
+  enabled: true
+  default_policy: highest_score_area
+  preferred_classes: []      # SOT chỉ có 1 track; lọc theo class ở đây là tự bắn chân
+  target_area_norm: 0.12
+  deadzone_px: 12.0
+  lost_recovery_frames: 15
+  pid:
+    yaw:     {kp: 0.08, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    pitch:   {kp: 0.06, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    forward: {kp: 0.40, ki: 0.0, kd: 0.0, out_limit: 3.0}
+    vertical: {kp: 0.0,  ki: 0.0, kd: 0.0, out_limit: 2.0}
+
+controller:
+  backend: mock
+
+sinks:
+  video:      {enabled: true, path: output/sot_pipeline.mp4, codec: mp4v, fps: 30, draw: true}
+  telemetry:  {enabled: true, path: output/sot_telemetry.jsonl, csv_summary: output/sot_telemetry_summary.csv}
+  control_log: {enabled: true, path: output/sot_commands.jsonl}
+  sot_result: {enabled: true, path: output/sot_result.txt}

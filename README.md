@@ -275,6 +275,51 @@ the tracker consumes our `Detection` contract, `Track` is multi-class aware
 (`cls`/`name`/`plate_text`), and an optional `same_class_gate` exists for dense
 multi-class scenes (off by default = original behavior).
 
+## SOT — single object tracking (MCITrack)
+
+Bám **một** đối tượng bằng MCITrack (AAAI'25) thay cho MOT. Bật/tắt bằng
+`sot.enabled`; **SOT và MOT loại trừ nhau** — bật cả hai thì pipeline báo lỗi và
+dừng.
+
+```bash
+cd /home/anlnm/UAV
+MCITrack/.venv/bin/python -m uav_pipeline.scripts.run_pipeline \
+    --config uav_pipeline/configs/sot_mcitrack.yaml \
+    --source uav_pipeline/input/VisDrone2019-MOT-val/sequences/uav0000339_00001_v \
+    --source-type image_dir
+# chỉ định bbox đầu bằng tay
+    ... --init-bbox "949.9,576.5,93.5,126.9"
+# đổi qua MOT trong cùng một lệnh
+    ... --no-sot
+```
+
+**Yêu cầu môi trường** (không thay được):
+- Phải chạy bằng `/home/anlnm/UAV/MCITrack/.venv/bin/python`: cần torch cu128
+  (RTX 5080 là sm_120; torch cu121 không thấy GPU). Env này **không có openvino**,
+  nên `detector.backend` phải là `onnx` hoặc `torch`.
+- Cần clone MCITrack ở `sot.mcitrack_root` kèm checkpoint
+  `checkpoints/train/mcitrack/<sot.config>/MCITRACK_ep0300.pth.tar` (1.44 GB).
+  `uav_pipeline` **không** copy code MCITrack.
+
+**Chọn bbox đầu**: có `sot.init_bbox` thì dùng nó; không có thì chạy detector và
+lấy box **conf cao nhất** trong `sot.init_classes` (`[]` = theo
+`detector.classes_of_interest`). Frame đầu không có box là bình thường — pipeline
+ở mode `acquire` và thử lại từng frame tới khi thấy box.
+
+**Kết quả**: `sinks.sot_result` ghi `frame,x,y,w,h,conf,alive` (frame 1-indexed,
+xywh pixel ảnh gốc, `-1,...,0` khi chưa acquire hoặc đã LOST). Video HUD và
+telemetry dùng chung sink với MOT.
+
+**Guard (`sot.guard.enabled`, mặc định OFF)**: MCITrack không có khái niệm "mất
+target" — nó luôn trả 1 box mỗi frame, nên khi đối tượng ra khỏi khung nó sẽ bám
+sang vật khác. Guard thêm 3 tầng cắt: nhảy bất khả thi (mỗi frame), lệch dự đoán
+vận tốc (mỗi frame), và verify bằng detector mỗi `verify_every` frame.
+
+⚠️ **Giới hạn đã đo của guard**: trên 15 video VisDrone test-dev nó cắt **đúng 4 /
+oan 6**. Ba ngưỡng hiện tại được calibrate trên 5 đối tượng của **một** sequence
+val. Bật guard là đánh đổi: bớt bám sai vật, thêm rủi ro cắt sớm. Tắt guard cho
+kết quả y hệt MCITrack gốc.
+
 ## Performance notes
 
 - Jetson Orin Nano 8GB reference: YOLO @640 TRT FP16 ≈ 37 FPS without CMC,
