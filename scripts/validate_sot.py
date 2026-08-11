@@ -797,6 +797,43 @@ def test_deferred_retract_from_silent_when_held_empty_and_ctx_matches():
     print("[ok] test_deferred_retract_from_silent_when_held_empty_and_ctx_matches")
 
 
+def test_pipeline_tracker_optional_when_sot_enabled():
+    """Kiểm bằng đọc source: 3 chỗ dùng self.tracker phải chịu được None.
+
+    Không khởi tạo Pipeline thật (cần model + video); test này chặn đúng lỗi
+    AttributeError: 'NoneType' has no attribute 'cmc'/'frame_count'/'get_stats'.
+    """
+    src = open(os.path.join(_CODE_ROOT, "uav_pipeline", "pipeline.py")).read()
+    assert "self.tracker = DroneByteTracker(config.tracker) if config.tracker.enabled" in src, \
+        "tracker phải là None khi tracker.enabled=false"
+    assert "if self.tracker is not None and self.tracker.cmc is not None" in src, \
+        "_extra_stats phải guard self.tracker None"
+    assert "if self.tracker is not None and self.cfg.tracker.interpolate_max_gap" in src, \
+        "close() phải guard self.tracker None"
+    assert '"sot"' in src, "extra_stats phải có key sot cho HUD"
+    print("[ok] test_pipeline_tracker_optional_when_sot_enabled")
+
+
+def test_telemetry_has_sot_field():
+    import json
+    import tempfile
+    from uav_pipeline.config import TelemetrySinkCfg
+    from uav_pipeline.sinks.telemetry import TelemetrySink
+    d = tempfile.mkdtemp()
+    sink = TelemetrySink(TelemetrySinkCfg(
+        enabled=True, path=os.path.join(d, "t.jsonl"),
+        csv_summary=os.path.join(d, "t.csv")))
+    ctx = _ctx(0)
+    ctx.extra_stats = {"sot": "tracking #1 conf 0.83"}
+    sink.write(ctx)
+    sink.close()
+    rec = json.loads(open(os.path.join(d, "t.jsonl")).readline())
+    assert rec["sot"] == "tracking #1 conf 0.83", rec
+    head = open(os.path.join(d, "t.csv")).readline().strip().split(",")
+    assert head[-1] == "sot", head
+    print("[ok] test_telemetry_has_sot_field")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
@@ -846,6 +883,8 @@ TESTS = [
     test_sot_reacquire_increments_id_and_reinitializes,
     test_sot_needs_deferral_flag,
     test_sot_prefetched_detections_not_detected_twice,
+    test_pipeline_tracker_optional_when_sot_enabled,
+    test_telemetry_has_sot_field,
 ]
 
 
