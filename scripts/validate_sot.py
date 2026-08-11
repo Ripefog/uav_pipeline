@@ -375,6 +375,72 @@ def test_sot_result_sink_flushes_every_frame():
     print("[ok] test_sot_result_sink_flushes_every_frame")
 
 
+from uav_pipeline.sinks.deferred import DeferredSinkWriter  # noqa: E402
+
+
+def test_deferred_passthrough_when_not_provisional():
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    for i in range(3):
+        d.write(_ctx(i, Track(1, [0, 0, 10, 10], 0.9, i)))
+    d.close()
+    assert [c.meta.idx for c in out] == [0, 1, 2], [c.meta.idx for c in out]
+    assert all(c.tracks for c in out)
+    print("[ok] test_deferred_passthrough_when_not_provisional")
+
+
+def test_deferred_holds_provisional_then_flushes():
+    """Chuỗi nghi ngờ bị ngắt -> frame đang giữ ghi ra NGUYÊN box."""
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)))
+    d.write(_ctx(1, Track(1, [0, 0, 10, 10], 0.9, 1)), provisional=True)
+    assert [c.meta.idx for c in out] == [0], "frame nghi ngờ phải được giữ lại"
+    d.write(_ctx(2, Track(1, [0, 0, 10, 10], 0.9, 2)))
+    assert [c.meta.idx for c in out] == [0, 1, 2]
+    assert all(c.tracks for c in out), "flush phải giữ nguyên box"
+    d.close()
+    print("[ok] test_deferred_holds_provisional_then_flushes")
+
+
+def test_deferred_retracts_held_frames_on_cut():
+    """LOST cắt lui: frame đang giữ có frame_id >= lost_at bị xoá box.
+
+    motion.k=2 -> max_hold=1 -> đúng 0 frame box sai lọt ra output.
+    """
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)))          # f1 tốt
+    d.write(_ctx(1, Track(1, [900, 900, 10, 10], 0.9, 1)), provisional=True)  # f2 nghi
+    d.write(_ctx(2), retract_from=2)                             # f3: LOST, cắt về f2
+    d.close()
+    assert [c.meta.idx for c in out] == [0, 1, 2]
+    assert out[0].tracks, "f1 tốt phải giữ box"
+    assert out[1].tracks == [], "f2 phải bị xoá box (cắt lui)"
+    assert out[2].tracks == []
+    print("[ok] test_deferred_retracts_held_frames_on_cut")
+
+
+def test_deferred_close_flushes_pending():
+    """Hết video mà còn frame đang giữ (chuỗi chưa đủ k) -> coi là hợp lệ."""
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)), provisional=True)
+    assert out == []
+    d.close()
+    assert [c.meta.idx for c in out] == [0] and out[0].tracks
+    print("[ok] test_deferred_close_flushes_pending")
+
+
+def test_deferred_max_hold_zero_is_passthrough():
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=0)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)), provisional=True)
+    assert [c.meta.idx for c in out] == [0], "max_hold=0 -> ghi ngay"
+    d.close()
+    print("[ok] test_deferred_max_hold_zero_is_passthrough")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
@@ -400,6 +466,11 @@ TESTS = [
     test_sot_result_sink_format,
     test_sot_result_sink_disabled_writes_nothing,
     test_sot_result_sink_flushes_every_frame,
+    test_deferred_passthrough_when_not_provisional,
+    test_deferred_holds_provisional_then_flushes,
+    test_deferred_retracts_held_frames_on_cut,
+    test_deferred_close_flushes_pending,
+    test_deferred_max_hold_zero_is_passthrough,
 ]
 
 
