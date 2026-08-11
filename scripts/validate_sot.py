@@ -797,6 +797,43 @@ def test_deferred_retract_from_silent_when_held_empty_and_ctx_matches():
     print("[ok] test_deferred_retract_from_silent_when_held_empty_and_ctx_matches")
 
 
+def test_deferred_snapshot_survives_live_track_mutation():
+    """Bug tim thay bang end-to-end run (fix round 4): SotTracker chi giu DUY
+    NHAT 1 instance Track va tra ve [self.trk] moi frame (sot/tracker.py) ->
+    neu _held giu tham chieu SONG toi Track do, khi Track.update() cua frame
+    SAU gan lai bbox/confidence va append vao trajectory (contracts.py:110-130)
+    thi frame DANG GIU cung doc ra gia tri moi -> box that cua frame provisional
+    bi thay am tham bang box cua frame ke tiep, va frame ke tiep bi ghi ra 2 lan
+    voi 2 gia tri GIONG NHAU TUNG CHU SO (dung ket qua do duoc tren
+    uav0000086_00000_v f148/f149).
+
+    Test nay dung THANG Track.update() (khong stand-in) de mo phong dung cach
+    SotTracker mutate: gan lai bbox/confidence/age (khong mutate in-place) +
+    append vao trajectory tai cho (mutate in-place).
+    """
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    live = Track(1, [100.0, 100.0, 140.0, 180.0], 0.38, 0, cls=3, name="car")
+    d.write(_ctx(0, live), provisional=True)   # giu lai TAI THOI DIEM nay
+
+    # Mo phong SotTracker.update() cho frame SAU: CUNG object 'live' bi gan lai
+    # bbox/confidence va append vao trajectory tai cho.
+    live.update([200.0, 200.0, 240.0, 280.0], 0.90, 1)
+
+    d.write(_ctx(1, live))   # khong provisional -> flush frame 0 truoc, roi ghi frame 1
+
+    assert [c.meta.idx for c in out] == [0, 1], [c.meta.idx for c in out]
+    held_track = out[0].tracks[0]
+    assert [float(v) for v in held_track.bbox] == [100.0, 100.0, 140.0, 180.0], \
+        ("box cua frame giu lai bi doi thanh box cua frame sau", held_track.bbox)
+    assert held_track.confidence == 0.38, \
+        ("conf cua frame giu lai bi doi thanh conf cua frame sau", held_track.confidence)
+    assert len(held_track.trajectory) == 1, \
+        ("trajectory cua frame giu lai bi frame sau append them", held_track.trajectory)
+    d.close()
+    print("[ok] test_deferred_snapshot_survives_live_track_mutation")
+
+
 def test_pipeline_tracker_optional_when_sot_enabled():
     """Kiểm bằng đọc source: 3 chỗ dùng self.tracker phải chịu được None.
 
@@ -914,6 +951,7 @@ TESTS = [
     test_deferred_retract_from_silent_on_normal_cut,
     test_deferred_retract_from_warns_when_held_empty_and_ctx_ahead,
     test_deferred_retract_from_silent_when_held_empty_and_ctx_matches,
+    test_deferred_snapshot_survives_live_track_mutation,
     test_sot_acquire_scans_until_first_box,
     test_sot_picks_highest_conf_within_init_classes,
     test_sot_init_bbox_skips_detector,

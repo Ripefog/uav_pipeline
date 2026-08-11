@@ -11,9 +11,32 @@ output. Với motion.k=2 thì trễ đúng 1 frame (33ms @30fps).
 Chỉ được dùng khi guard.enabled và guard.motion.enabled. Đường MOT và đường
 guard-off không đi qua lớp này.
 """
+import copy
 from typing import Callable, List, Optional
 
 from ..contracts import FrameContext
+
+
+def _snapshot_tracks(tracks):
+    """Copy nong (shallow) moi Track truoc khi giu lai trong _held.
+
+    SotTracker chi giu 1 instance Track duy nhat va tra ve [self.trk] moi
+    frame (sot/tracker.py) -> tracks[0] cua ctx dang giu va tracks[0] cua ctx
+    frame SAU la CUNG MOT object Python. Track.update() GAN LAI (khong mutate
+    in-place) cac thuoc tinh nhu bbox/confidence/age (contracts.py) nen
+    copy.copy() la du cho chung -> gan lai o object goc khong lam thay doi
+    ban copy. Nhung 'trajectory' la list bi mutate bang append()/pop() ngay
+    tai cho, nen phai copy rieng list nay, khong thoi ban copy van thay doi
+    theo object goc.
+    """
+    snap = []
+    for t in tracks:
+        t2 = copy.copy(t)
+        traj = getattr(t2, "trajectory", None)
+        if traj is not None:
+            t2.trajectory = list(traj)
+        snap.append(t2)
+    return snap
 
 
 class DeferredSinkWriter:
@@ -53,6 +76,11 @@ class DeferredSinkWriter:
             self._emit(ctx)
             return
         if provisional and self.max_hold > 0:
+            # Chup nhanh tracks TAI THOI DIEM giu lai. Khong deep-copy ca ctx
+            # (ctx.frame la anh goc, cop lang phi) -- chi thay ctx.tracks bang
+            # list Track da copy, de tracker mutate object song ve sau khong
+            # lam sai box da flush ra tu buffer nay.
+            ctx.tracks = _snapshot_tracks(ctx.tracks)
             self._held.append(ctx)
             while len(self._held) > self.max_hold:
                 self._emit(self._held.pop(0))
