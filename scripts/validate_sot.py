@@ -322,6 +322,59 @@ def test_guard_verify_class_gate_rejects_wrong_class():
     print("[ok] test_guard_verify_class_gate_rejects_wrong_class")
 
 
+from uav_pipeline.config import SotResultSinkCfg  # noqa: E402
+from uav_pipeline.contracts import FrameContext, FrameMeta, Track  # noqa: E402
+from uav_pipeline.sinks.sot_result import SotResultSink  # noqa: E402
+
+
+def _ctx(idx, track=None):
+    return FrameContext(meta=FrameMeta(idx=idx, ts=0.0, shape_hw=(1071, 1904)),
+                        frame=None, tracks=[track] if track is not None else [])
+
+
+def test_sot_result_sink_format():
+    import tempfile
+    path = os.path.join(tempfile.mkdtemp(), "sot_result.txt")
+    sink = SotResultSink(SotResultSinkCfg(enabled=True, path=path))
+    sink.write(_ctx(0))                                  # acquire, chưa có box
+    sink.write(_ctx(1))
+    t = Track(track_id=1, bbox=[949.9, 576.5, 1043.4, 703.4],
+              confidence=0.926, frame_id=2, cls=5, name="truck")
+    sink.write(_ctx(2, t))                               # frame init
+    sink.write(_ctx(3))                                  # LOST
+    sink.close()
+
+    lines = open(path).read().strip().split("\n")
+    assert lines[0] == "1,-1,-1,-1,-1,-1,0", lines[0]
+    assert lines[1] == "2,-1,-1,-1,-1,-1,0", lines[1]
+    # frame 1-indexed (meta.idx+1); xyxy -> xywh; 2 chữ số box, 4 chữ số conf
+    assert lines[2] == "3,949.90,576.50,93.50,126.90,0.9260,1", lines[2]
+    assert lines[3] == "4,-1,-1,-1,-1,-1,0", lines[3]
+    assert len(lines) == 4, "số dòng phải bằng số frame"
+    print("[ok] test_sot_result_sink_format")
+
+
+def test_sot_result_sink_disabled_writes_nothing():
+    import tempfile
+    path = os.path.join(tempfile.mkdtemp(), "off.txt")
+    sink = SotResultSink(SotResultSinkCfg(enabled=False, path=path))
+    sink.write(_ctx(0))
+    sink.close()
+    assert not os.path.exists(path), "sink tắt thì không được tạo file"
+    print("[ok] test_sot_result_sink_disabled_writes_nothing")
+
+
+def test_sot_result_sink_flushes_every_frame():
+    """Flush từng frame: crash giữa đường vẫn còn kết quả tới frame cuối."""
+    import tempfile
+    path = os.path.join(tempfile.mkdtemp(), "flush.txt")
+    sink = SotResultSink(SotResultSinkCfg(enabled=True, path=path))
+    sink.write(_ctx(0))
+    assert open(path).read() == "1,-1,-1,-1,-1,-1,0\n", "chưa flush"
+    sink.close()
+    print("[ok] test_sot_result_sink_flushes_every_frame")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
@@ -344,6 +397,9 @@ TESTS = [
     test_guard_verify_needs_prior_confirmation,
     test_guard_verify_cuts_after_confirmation,
     test_guard_verify_class_gate_rejects_wrong_class,
+    test_sot_result_sink_format,
+    test_sot_result_sink_disabled_writes_nothing,
+    test_sot_result_sink_flushes_every_frame,
 ]
 
 
