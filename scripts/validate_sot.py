@@ -504,6 +504,50 @@ def test_deferred_retract_from_silent_on_normal_cut():
     print("[ok] test_deferred_retract_from_silent_on_normal_cut")
 
 
+def test_deferred_retract_from_warns_when_held_empty_and_ctx_ahead():
+    """max_hold=0 -> _held luôn rỗng vĩnh viễn, mọi retract_from đi qua nhánh
+    "held rỗng" (sinks/deferred.py: else gap = ctx.meta.idx + 1 > retract_from).
+    Nhánh này trước round 3 không có test nào chạm tới (2 test round 2 đều để
+    _held không rỗng lúc cắt lui). ctx.idx+1 > retract_from -> khoảng hở
+    [retract_from, ctx.idx] đã bị ghi ra từ lâu (mọi write trước đó với
+    max_hold=0 đều pass-through ngay) -> phải warn.
+    """
+    import contextlib
+    import io
+
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=0)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)))
+    d.write(_ctx(1, Track(1, [0, 0, 10, 10], 0.9, 1)))
+    assert [c.meta.idx for c in out] == [0, 1], "max_hold=0 -> ghi ngay, _held rỗng"
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        # retract_from=1 (frame_id=1, chinh la frame 0) da roi buffer tu lau,
+        # ctx hien tai la frame_id=3 (idx=2) -> 3 > 1 -> co ho, phai warn
+        d.write(_ctx(2), retract_from=1)
+    assert "[deferred]" in buf.getvalue(), buf.getvalue()
+    d.close()
+    print("[ok] test_deferred_retract_from_warns_when_held_empty_and_ctx_ahead")
+
+
+def test_deferred_retract_from_silent_when_held_empty_and_ctx_matches():
+    """max_hold=0, _held rỗng, retract_from đúng bằng chính ctx đang tới
+    (ctx.idx+1 == retract_from) -> nhịp ĐÚNG, phải im lặng, không warn."""
+    import contextlib
+    import io
+
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=0)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        # ctx la frame_id=2 (idx=1), retract_from=2 -> dung chinh ctx nay, khop
+        d.write(_ctx(1), retract_from=2)
+    assert buf.getvalue() == "", buf.getvalue()
+    d.close()
+    print("[ok] test_deferred_retract_from_silent_when_held_empty_and_ctx_matches")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
@@ -537,6 +581,8 @@ TESTS = [
     test_deferred_second_close_does_not_double_emit,
     test_deferred_retract_from_warns_when_gap_already_emitted,
     test_deferred_retract_from_silent_on_normal_cut,
+    test_deferred_retract_from_warns_when_held_empty_and_ctx_ahead,
+    test_deferred_retract_from_silent_when_held_empty_and_ctx_matches,
 ]
 
 
