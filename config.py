@@ -117,6 +117,7 @@ class CMCCfg:
 
 @dataclass
 class TrackerCfg:
+    enabled: bool = True     # False = tắt MOT (dùng khi sot.enabled=true)
     high_conf: float = 0.4
     low_conf: float = 0.15
     iou: float = 0.3
@@ -127,6 +128,48 @@ class TrackerCfg:
     interpolate_max_gap: int = 5
     same_class_gate: bool = False
     trajectory_len: int = 60
+
+
+@dataclass
+class SotJumpCfg:
+    """Tầng 1 của guard: bắt cú nhảy bất khả thi về vật lý (chạy mỗi frame)."""
+    enabled: bool = True
+    px: float = 90.0          # ngưỡng dịch chuyển tâm/frame TẠI ref_width
+    area: float = 2.5         # ngưỡng tỉ lệ diện tích/frame
+    ref_width: float = 1904.0  # độ phân giải mà px được calibrate
+
+
+@dataclass
+class SotMotionCfg:
+    """Tầng 2: bắt drift DẦN sang vật cùng class kề bên (dự đoán vận tốc không đổi)."""
+    enabled: bool = True
+    iou: float = 0.05
+    k: int = 2                # số frame liên tiếp vi phạm -> LOST (cắt lui về đầu chuỗi)
+
+
+@dataclass
+class SotGuardCfg:
+    enabled: bool = False     # OFF = hành vi MCITrack gốc, không bao giờ LOST
+    gate: str = "class"       # class | family | presence
+    verify_every: int = 10
+    K: int = 3                # số lần verify MISS liên tiếp -> LOST
+    iou_gate: float = 0.3
+    jump: SotJumpCfg = field(default_factory=SotJumpCfg)
+    motion: SotMotionCfg = field(default_factory=SotMotionCfg)
+
+
+@dataclass
+class SotCfg:
+    enabled: bool = False
+    mcitrack_root: str = "/home/anlnm/UAV/MCITrack"
+    config: str = "mcitrack_l384"      # experiments/mcitrack/<config>.yaml
+    dataset_preset: str = "uav"        # chọn preset UPT/UPH/INTER/MB
+    device: str = "cuda:0"             # 'cuda' hoặc 'cuda:N'
+    init_bbox: Optional[List[float]] = None   # [x,y,w,h]; None = detector tự lấy
+    init_classes: List[int] = field(default_factory=list)  # [] = theo detector.classes_of_interest
+    detect_every_frame: bool = False
+    on_lost: str = "stop"              # stop | reacquire (chỉ có tác dụng khi guard bật)
+    guard: SotGuardCfg = field(default_factory=SotGuardCfg)
 
 
 @dataclass
@@ -201,10 +244,17 @@ class ControlLogSinkCfg:
 
 
 @dataclass
+class SotResultSinkCfg:
+    enabled: bool = True
+    path: str = "output/sot_result.txt"
+
+
+@dataclass
 class SinksCfg:
     video: VideoSinkCfg = field(default_factory=VideoSinkCfg)
     telemetry: TelemetrySinkCfg = field(default_factory=TelemetrySinkCfg)
     control_log: ControlLogSinkCfg = field(default_factory=ControlLogSinkCfg)
+    sot_result: SotResultSinkCfg = field(default_factory=SotResultSinkCfg)
 
 
 @dataclass
@@ -213,6 +263,7 @@ class Config:
     detector: DetectorCfg = field(default_factory=DetectorCfg)
     ocr: OCRCfg = field(default_factory=OCRCfg)
     tracker: TrackerCfg = field(default_factory=TrackerCfg)
+    sot: SotCfg = field(default_factory=SotCfg)
     follow: FollowCfg = field(default_factory=FollowCfg)
     controller: ControllerCfg = field(default_factory=ControllerCfg)
     sinks: SinksCfg = field(default_factory=SinksCfg)
@@ -228,6 +279,56 @@ class Config:
         cfg = cls.from_dict(data)
         cfg._source_path = path  # type: ignore[attr-defined]
         return cfg
+
+    def validate(self) -> List[str]:
+        """Lỗi cấu hình chí tử. Rỗng = ok. Caller tự sys.exit.
+
+        Chạy TRƯỚC khi load checkpoint MCITrack 1.44GB (~20s) để chết sớm, chết rõ.
+        """
+        errs: List[str] = []
+        if self.sot.enabled and self.tracker.enabled:
+            errs.append(
+                "sot.enabled và tracker.enabled không được bật cùng lúc — SOT và MOT "
+                "loại trừ nhau. Đặt tracker.enabled: false để chạy SOT, hoặc "
+                "sot.enabled: false để chạy MOT.")
+        if not self.sot.enabled and not self.tracker.enabled:
+            errs.append("cả sot.enabled và tracker.enabled đều false — "
+                        "không có tracker nào chạy.")
+        if self.sot.enabled:
+            if self.sot.on_lost not in ("stop", "reacquire"):
+                errs.append(f"sot.on_lost phải là 'stop' hoặc 'reacquire', "
+                            f"đang là '{self.sot.on_lost}'")
+            g = self.sot.guard
+            if g.gate not in ("class", "family", "presence"):
+                errs.append(f"sot.guard.gate phải là class|family|presence, "
+                            f"đang là '{g.gate}'")
+            if g.enabled:
+                if g.verify_every < 1:
+                    errs.append("sot.guard.verify_every phải >= 1")
+                if g.K < 1:
+                    errs.append("sot.guard.K phải >= 1")
+                if g.motion.k < 1:
+                    errs.append("sot.guard.motion.k phải >= 1")
+                if g.jump.ref_width <= 0:
+                    errs.append("sot.guard.jump.ref_width phải > 0")
+            if self.sot.init_bbox is not None:
+                b = self.sot.init_bbox
+                if len(b) != 4 or float(b[2]) <= 0 or float(b[3]) <= 0:
+                    errs.append(f"sot.init_bbox phải là [x,y,w,h] với w>0 và h>0, "
+                                f"đang là {b}")
+        return errs
+
+    def warnings(self) -> List[str]:
+        """Cảnh báo không chết, chỉ in ra."""
+        w: List[str] = []
+        if self.sot.enabled:
+            if self.source.loop:
+                w.append("source.loop=true + SOT: video chạy vòng lại nên guard sẽ "
+                         "tính chuyển động sai ở chỗ nối.")
+            if self.sot.on_lost == "reacquire" and not self.sot.guard.enabled:
+                w.append("sot.on_lost=reacquire nhưng sot.guard.enabled=false -> "
+                         "MCITrack không bao giờ tuyên bố LOST nên reacquire vô hiệu.")
+        return w
 
     def model_path_for(self, backend: str) -> str:
         """Resolve the primary model path for the active backend."""
