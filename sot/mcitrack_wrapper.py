@@ -5,7 +5,8 @@ phần "bẩn" mà repo MCITrack bắt buộc phải có:
 
   1. sys.path.insert(mcitrack_root) — không copy code, không vendor.
   2. patch torch.load(weights_only=False): torch >= 2.6 mặc định True sẽ crash khi
-     load checkpoint MCITrack.
+     load checkpoint MCITrack. Patch này TOÀN CỤC, KHÔNG restore, và idempotent
+     (xem docstring _patch_torch_load).
   3. patch lib.models.mcitrack.encoder.is_main_process -> False: bỏ tải
      pretrained/fast_itpn_large_1600e_1k.pt (1.5GB) vì checkpoint bên dưới load
      strict=True nên ghi đè toàn bộ weight encoder anyway.
@@ -26,6 +27,36 @@ import numpy as np
 from ..config import SotCfg
 
 _REQUIRED = os.path.join("lib", "test", "evaluation", "tracker.py")
+
+
+def _patch_torch_load(torch_mod) -> None:
+    """Patch torch_mod.load để mặc định weights_only=False.
+
+    torch >= 2.6 đổi default weights_only sang True; checkpoint MCITrack là
+    dict thường (không chỉ tensor) lưu bằng torch.save đời cũ nên load thẳng sẽ
+    crash. setdefault() giữ nguyên: nếu caller tự truyền weights_only thì giá
+    trị đó vẫn thắng, patch chỉ đổi DEFAULT.
+
+    Đây là patch TOÀN CỤC (ghi đè torch_mod.load, ảnh hưởng mọi torch.load gọi
+    sau đó trong CÙNG process, không riêng gì MCITrack) và KHÔNG được restore
+    lại — có thể tạo nhiều MCITrackModel trong một process (reacquire dài hạn,
+    hoặc 2 phiên SOT nối tiếp) nên không có mốc "hết cần SOT" nào an toàn để
+    unpatch; unpatch giữa lúc model khác còn sống sẽ làm nó crash lại.
+
+    Đổi lại: hàm này idempotent — đánh dấu wrapper bằng thuộc tính
+    ``_uav_sot_patched`` và bỏ qua nếu đã patch, để gọi lại (constructor thứ 2,
+    thứ 3...) không lồng closure vào nhau vô hạn.
+    """
+    if getattr(torch_mod.load, "_uav_sot_patched", False):
+        return
+    _orig_load = torch_mod.load
+
+    def _load(*a, **k):
+        k.setdefault("weights_only", False)
+        return _orig_load(*a, **k)
+
+    _load._uav_sot_patched = True
+    torch_mod.load = _load
 
 
 def _device_index(device: str) -> int:
@@ -73,13 +104,7 @@ class MCITrackModel:
         if root not in sys.path:
             sys.path.insert(0, root)
 
-        _orig_load = torch.load
-
-        def _load(*a, **k):
-            k.setdefault("weights_only", False)
-            return _orig_load(*a, **k)
-
-        torch.load = _load   # patch toàn cục, giống script gốc của MCITrack
+        _patch_torch_load(torch)   # patch toàn cục, không restore — xem docstring
 
         import lib.models.mcitrack.encoder as enc_mod
         enc_mod.is_main_process = lambda: False
@@ -114,6 +139,16 @@ class MCITrackModel:
 
 
 def build_mcitrack_model(cfg: SotCfg) -> MCITrackModel:
+    """preflight(cfg) rồi build MCITrackModel(cfg).
+
+    QUAN TRỌNG: nếu preflight() thấy lỗi, hàm này raise SystemExit — KHÔNG phải
+    Exception thường. SystemExit kế thừa BaseException, nên
+    ``except Exception`` ở caller sẽ KHÔNG bắt được nó và process sẽ thoát.
+    Đây là chủ ý: cấu hình SOT sai là lỗi khởi động (fail-fast), không phải lỗi
+    runtime có thể degrade-gracefully như OCR — operator cần thấy thông báo rõ
+    và process dừng ngay, không có traceback rác. Caller KHÔNG được bắt
+    SystemExit này để "catch-and-continue".
+    """
     errs = preflight(cfg)
     if errs:
         raise SystemExit("[sot] cấu hình SOT lỗi:\n  - " + "\n  - ".join(errs))

@@ -21,7 +21,8 @@ from uav_pipeline.contracts import Detection  # noqa: E402
 from uav_pipeline.sot.class_groups import accepted_ids  # noqa: E402
 from uav_pipeline.sot.guard import LostGuard, iou_xywh  # noqa: E402
 from uav_pipeline.config import SotCfg  # noqa: E402
-from uav_pipeline.sot.mcitrack_wrapper import _device_index, preflight  # noqa: E402
+from uav_pipeline.sot.mcitrack_wrapper import (  # noqa: E402
+    MCITrackModel, _device_index, _patch_torch_load, preflight)
 
 
 def test_config_defaults_backward_compatible():
@@ -358,6 +359,54 @@ def test_preflight_bad_device_index():
                             device=f"cuda:{n + 5}"))
     assert any("GPU" in e for e in errs), errs
     print("[ok] test_preflight_bad_device_index")
+
+
+def test_mcitrack_wrapper_resets_h_state_each_initialize():
+    """h_state reset PHẢI chạy mỗi initialize(), không chỉ lần đầu (MCITrack gốc
+    chỉ set h_state trong __init__, xem lib/test/tracker/mcitrack.py:34 —
+    initialize() của repo không đụng tới nó). Nếu thiếu reset này, hidden state
+    Mamba của target CŨ rò sang target MỚI khi reacquire.
+
+    Test này KHÔNG load GPU/checkpoint: tự tạo MCITrackModel bằng
+    object.__new__ (bỏ qua __init__) rồi gắn 1 stub nhỏ vào self._t, chỉ để
+    kiểm đúng 1 hành vi — initialize() của MCITrackModel có tự reset h_state
+    hay không.
+    """
+    class _StubTracker:
+        def __init__(self):
+            self.h_state = None
+
+        def initialize(self, frame_rgb, info):
+            pass   # stub: không cần làm gì, chỉ cần tồn tại để gọi được
+
+    m = object.__new__(MCITrackModel)   # bỏ qua __init__ thật (không đụng GPU)
+    m._n_layers = 4
+    m._t = _StubTracker()
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+
+    m.initialize(frame, [0, 0, 10, 10])
+    assert m._t.h_state == [None, None, None, None], m._t.h_state
+
+    m._t.h_state = ["stale"] * 4          # giả lập hidden state của target CŨ
+    m.initialize(frame, [0, 0, 10, 10])   # initialize() lần 2, kiểu reacquire
+    assert m._t.h_state == [None, None, None, None], (
+        "initialize() lần 2 không reset h_state -> Mamba state của target cũ "
+        "rò sang target mới")
+    print("[ok] test_mcitrack_wrapper_resets_h_state_each_initialize")
+
+
+def test_torch_load_patch_is_idempotent():
+    """torch.load bị patch lại (MCITrackModel thứ 2 trong cùng process — ví dụ
+    reacquire dài hạn hoặc 2 phiên SOT nối tiếp) không được lồng closure vào
+    nhau vô hạn: _patch_torch_load gọi 2 lần phải là no-op ở lần thứ 2."""
+    import torch
+    _patch_torch_load(torch)
+    wrapped_once = torch.load
+    _patch_torch_load(torch)
+    wrapped_twice = torch.load
+    assert wrapped_once is wrapped_twice, (
+        "goi _patch_torch_load 2 lan phai la no-op, khong duoc long closure moi")
+    print("[ok] test_torch_load_patch_is_idempotent")
 
 
 from uav_pipeline.config import SotResultSinkCfg  # noqa: E402
@@ -774,6 +823,8 @@ TESTS = [
     test_preflight_bad_root,
     test_preflight_good_root_reports_only_gpu_issues,
     test_preflight_bad_device_index,
+    test_mcitrack_wrapper_resets_h_state_each_initialize,
+    test_torch_load_patch_is_idempotent,
     test_sot_result_sink_format,
     test_sot_result_sink_disabled_writes_nothing,
     test_sot_result_sink_flushes_every_frame,
