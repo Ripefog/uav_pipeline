@@ -20,6 +20,8 @@ from uav_pipeline.config import SotGuardCfg  # noqa: E402  (thêm cùng import C
 from uav_pipeline.contracts import Detection  # noqa: E402
 from uav_pipeline.sot.class_groups import accepted_ids  # noqa: E402
 from uav_pipeline.sot.guard import LostGuard, iou_xywh  # noqa: E402
+from uav_pipeline.config import SotCfg  # noqa: E402
+from uav_pipeline.sot.mcitrack_wrapper import _device_index, preflight  # noqa: E402
 
 
 def test_config_defaults_backward_compatible():
@@ -322,6 +324,42 @@ def test_guard_verify_class_gate_rejects_wrong_class():
     print("[ok] test_guard_verify_class_gate_rejects_wrong_class")
 
 
+def test_device_index_parsing():
+    assert _device_index("cuda") == 0
+    assert _device_index("") == 0
+    assert _device_index("cuda:1") == 1
+    assert _device_index("CUDA:2") == 2
+    try:
+        _device_index("cpu")
+    except ValueError as e:
+        assert "cuda" in str(e), str(e)
+    else:
+        raise AssertionError("sot.device='cpu' phải báo lỗi: MCITrack hardcode .cuda()")
+    print("[ok] test_device_index_parsing")
+
+
+def test_preflight_bad_root():
+    errs = preflight(SotCfg(mcitrack_root="/khong/ton/tai"))
+    assert any("mcitrack_root" in e for e in errs), errs
+    print("[ok] test_preflight_bad_root")
+
+
+def test_preflight_good_root_reports_only_gpu_issues():
+    """Root đúng -> không còn lỗi về path. Lỗi GPU (nếu có) là chuyện khác."""
+    errs = preflight(SotCfg(mcitrack_root="/home/anlnm/UAV/MCITrack"))
+    assert not any("mcitrack_root" in e for e in errs), errs
+    print("[ok] test_preflight_good_root_reports_only_gpu_issues")
+
+
+def test_preflight_bad_device_index():
+    import torch
+    n = torch.cuda.device_count()
+    errs = preflight(SotCfg(mcitrack_root="/home/anlnm/UAV/MCITrack",
+                            device=f"cuda:{n + 5}"))
+    assert any("GPU" in e for e in errs), errs
+    print("[ok] test_preflight_bad_device_index")
+
+
 from uav_pipeline.config import SotResultSinkCfg  # noqa: E402
 from uav_pipeline.contracts import FrameContext, FrameMeta, Track  # noqa: E402
 from uav_pipeline.sinks.sot_result import SotResultSink  # noqa: E402
@@ -570,6 +608,10 @@ TESTS = [
     test_guard_verify_needs_prior_confirmation,
     test_guard_verify_cuts_after_confirmation,
     test_guard_verify_class_gate_rejects_wrong_class,
+    test_device_index_parsing,
+    test_preflight_bad_root,
+    test_preflight_good_root_reports_only_gpu_issues,
+    test_preflight_bad_device_index,
     test_sot_result_sink_format,
     test_sot_result_sink_disabled_writes_nothing,
     test_sot_result_sink_flushes_every_frame,
