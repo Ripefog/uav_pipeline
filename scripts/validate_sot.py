@@ -16,6 +16,7 @@ if _CODE_ROOT not in sys.path:
     sys.path.insert(0, _CODE_ROOT)
 
 from uav_pipeline.config import Config  # noqa: E402
+from uav_pipeline.sot.class_groups import accepted_ids  # noqa: E402
 
 
 def test_config_defaults_backward_compatible():
@@ -90,12 +91,57 @@ def test_config_warnings():
     print("[ok] test_config_warnings")
 
 
+VISDRONE = {0: "pedestrian", 1: "people", 2: "bicycle", 3: "car", 4: "van",
+            5: "truck", 6: "tricycle", 7: "awning-tricycle", 8: "bus", 9: "motor"}
+
+
+def test_class_groups_gate_class():
+    # person gộp pedestrian + people (VisDrone tách người thành 2 class)
+    assert accepted_ids("class", 0, VISDRONE) == [0, 1]
+    assert accepted_ids("class", 1, VISDRONE) == [0, 1]
+    # car chỉ là car, KHÔNG kéo van/truck/bus vào (đó là việc của family)
+    assert accepted_ids("class", 3, VISDRONE) == [3]
+    assert accepted_ids("class", 5, VISDRONE) == [5]
+    print("[ok] test_class_groups_gate_class")
+
+
+def test_class_groups_gate_family():
+    # detector lẫn bus/van/car nặng: tại vị trí GT bus nó gán van 27 frame,
+    # bus 12, car 8, không có gì 17 frame (miss rate 78%)
+    assert accepted_ids("family", 8, VISDRONE) == [3, 4, 5, 8]
+    assert accepted_ids("family", 3, VISDRONE) == [3, 4, 5, 8]
+    assert accepted_ids("family", 9, VISDRONE) == [2, 6, 7, 9]
+    assert accepted_ids("family", 0, VISDRONE) == [0, 1]
+    print("[ok] test_class_groups_gate_family")
+
+
+def test_class_groups_presence_and_unknown():
+    # presence: bỏ qua class hoàn toàn
+    assert accepted_ids("presence", 3, VISDRONE) is None
+    # tên không có trong bảng -> hạ xuống presence thay vì trả list rỗng
+    # (list rỗng sẽ chặn mọi detection -> guard cắt oan mọi lúc)
+    assert accepted_ids("class", 99, VISDRONE) is None
+    assert accepted_ids("class", 0, {0: "airplane"}) is None
+    print("[ok] test_class_groups_presence_and_unknown")
+
+
+def test_class_groups_missing_name_in_names():
+    """names.yaml thiếu 'people' -> chỉ trả id thực sự có, không KeyError."""
+    partial = {0: "pedestrian", 3: "car"}
+    assert accepted_ids("class", 0, partial) == [0]
+    print("[ok] test_class_groups_missing_name_in_names")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
     test_config_sot_value_checks,
     test_config_nested_guard_defaults,
     test_config_warnings,
+    test_class_groups_gate_class,
+    test_class_groups_gate_family,
+    test_class_groups_presence_and_unknown,
+    test_class_groups_missing_name_in_names,
 ]
 
 
