@@ -28,6 +28,15 @@ class Pipeline:
     def __init__(self, config: Config):
         self.cfg = config
 
+        # Fail-fast: scripts/run_pipeline.py đã validate trước khi tới đây, nhưng
+        # eval_mot_visdrone.py và bất kỳ caller nào khác construct Pipeline(cfg)
+        # trực tiếp thì không. Chặn ở đây trước khi load detector/MCITrack (tốn
+        # thời gian) để lỗi cấu hình chết sớm, chết rõ — không phải AttributeError
+        # 'NoneType' sau khi model đã load xong.
+        errs = config.validate()
+        if errs:
+            raise SystemExit("[pipeline] cấu hình lỗi:\n  - " + "\n  - ".join(errs))
+
         # ---- source ----
         self.source = make_source(config.source)
         if config.sinks.video.fps <= 0:
@@ -321,7 +330,7 @@ class Pipeline:
         if self.sot is not None:
             print(f"[pipeline] SOT {self.sot.status}"
                   + (f"  (LOST @{self.sot.lost_at}: {self.sot.lost_reason})"
-                     if self.sot.lost_at else ""))
+                     if self.sot.lost_at is not None else ""))
         print("-" * 60)
 
 

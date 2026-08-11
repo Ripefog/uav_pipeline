@@ -316,6 +316,14 @@ class Config:
                 if len(b) != 4 or float(b[2]) <= 0 or float(b[3]) <= 0:
                     errs.append(f"sot.init_bbox phải là [x,y,w,h] với w>0 và h>0, "
                                 f"đang là {b}")
+                if self.follow.enabled and self.follow.preferred_classes:
+                    errs.append(
+                        "sot.enabled + sot.init_bbox + follow.preferred_classes "
+                        "non-empty: track SOT khởi tạo từ init_bbox có name "
+                        "'init_bbox', KHÔNG khớp bất kỳ tên nào trong "
+                        "preferred_classes -> follow/selector.py trả None MỌI "
+                        "frame, không bao giờ có lệnh follow. Đặt "
+                        "follow.preferred_classes: []")
         return errs
 
     def warnings(self) -> List[str]:
@@ -328,6 +336,13 @@ class Config:
             if self.sot.on_lost == "reacquire" and not self.sot.guard.enabled:
                 w.append("sot.on_lost=reacquire nhưng sot.guard.enabled=false -> "
                          "MCITrack không bao giờ tuyên bố LOST nên reacquire vô hiệu.")
+            if (self.follow.enabled and self.follow.preferred_classes
+                    and self.sot.init_bbox is None):
+                w.append(
+                    "sot.enabled + follow.preferred_classes non-empty: SOT chỉ có "
+                    "1 track — nếu class nó acquire được không nằm trong "
+                    "preferred_classes thì follow/selector.py trả None mỗi frame "
+                    "(không có lệnh follow). Đặt follow.preferred_classes: []")
         return w
 
     def model_path_for(self, backend: str) -> str:

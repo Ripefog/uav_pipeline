@@ -9,7 +9,7 @@ source:
   path: ""               # video file / image folder; or use --source on the CLI
   index: 0               # webcam index (type: webcam)
   gstreamer: ""          # gst pipeline string (type: gstreamer)
-  loop: true
+  loop: false            # loop + SOT = guard tính chuyển động sai ở chỗ nối
   fps: 30
   max_frames: 0          # 0 = all
 

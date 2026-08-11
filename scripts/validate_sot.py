@@ -97,6 +97,33 @@ def test_config_warnings():
     print("[ok] test_config_warnings")
 
 
+def test_config_sot_follow_preferred_classes_with_init_bbox_is_error():
+    """init_bbox -> track name 'init_bbox' không khớp preferred_classes NÀO cả
+    -> follow/selector.py trả None mọi frame -> guaranteed dead, phải là lỗi."""
+    cfg = Config.from_dict({
+        "tracker": {"enabled": False},
+        "sot": {"enabled": True, "init_bbox": [10, 10, 30, 50]},
+        "follow": {"enabled": True, "preferred_classes": ["car"]},
+    })
+    errs = cfg.validate()
+    assert any("init_bbox" in e and "preferred_classes" in e for e in errs), errs
+    print("[ok] test_config_sot_follow_preferred_classes_with_init_bbox_is_error")
+
+
+def test_config_sot_follow_preferred_classes_without_init_bbox_is_warning():
+    """Không có init_bbox: class acquire được từ detector CÓ THỂ nằm trong
+    preferred_classes -> chỉ là rủi ro có điều kiện, hạ xuống warning."""
+    cfg = Config.from_dict({
+        "tracker": {"enabled": False},
+        "sot": {"enabled": True},
+        "follow": {"enabled": True, "preferred_classes": ["car"]},
+    })
+    assert cfg.validate() == [], cfg.validate()
+    w = " | ".join(cfg.warnings())
+    assert "preferred_classes" in w, w
+    print("[ok] test_config_sot_follow_preferred_classes_without_init_bbox_is_warning")
+
+
 VISDRONE = {0: "pedestrian", 1: "people", 2: "bicycle", 3: "car", 4: "van",
             5: "truck", 6: "tricycle", 7: "awning-tricycle", 8: "bus", 9: "motor"}
 
@@ -896,18 +923,62 @@ def test_default_yaml_is_sot():
     # nếu class không nằm trong list (5/10 class VisDrone không có trong list MOT
     # cũ) -> follow/selector.py trả None mỗi frame, drone không nhận lệnh nào.
     assert cfg.follow.preferred_classes == [], cfg.follow.preferred_classes
+    # config mẫu ship trong repo không được tự cảnh báo về chính nó.
+    assert cfg.warnings() == [], cfg.warnings()
     print("[ok] test_default_yaml_is_sot")
 
 
 def test_mot_configs_untouched():
-    for f in ["local_onnx_batch16", "jetson_trt", "local_trt_fp16",
-              "local_trt_fp32", "local_trt_int8", "local_openvino_batch16"]:
+    """local_trt_* là file local KHÔNG commit (xem README/dặn dò) -> chỉ check
+    khi có mặt, không được coi thiếu file là fail. 3 config MOT tracked
+    (local_onnx_batch16, jetson_trt, local_openvino_batch16) luôn phải có và
+    luôn phải pass, để test này không bao giờ âm thầm thoái hoá thành check
+    0 config (ví dụ nếu cả 3 file local cùng vắng mặt)."""
+    tracked = ["local_onnx_batch16", "jetson_trt", "local_openvino_batch16"]
+    optional_local = ["local_trt_fp16", "local_trt_fp32", "local_trt_int8"]
+
+    def _check(f):
         p = os.path.join(_CODE_ROOT, "uav_pipeline", "configs", f + ".yaml")
         cfg = Config.from_yaml(p)
         assert cfg.tracker.enabled is True, f
         assert cfg.sot.enabled is False, f
         assert cfg.validate() == [], (f, cfg.validate())
-    print("[ok] test_mot_configs_untouched")
+
+    checked = 0
+    for f in tracked:
+        _check(f)
+        checked += 1
+    for f in optional_local:
+        p = os.path.join(_CODE_ROOT, "uav_pipeline", "configs", f + ".yaml")
+        if not os.path.exists(p):
+            continue
+        _check(f)
+        checked += 1
+    assert checked >= len(tracked), (
+        f"chỉ check được {checked}/{len(tracked)} config MOT tracked tối thiểu")
+    print(f"[ok] test_mot_configs_untouched ({checked} config checked)")
+
+
+def test_sot_guard_yaml_pins_calibrated_defaults():
+    """default.yaml và sot_mcitrack.yaml phải khớp TUYỆT ĐỐI với SotGuardCfg()
+    (trừ 'enabled', cố ý khác nhau per-file) — các số này là đo thực tế trên
+    VisDrone, không phải tuning knob; một chữ số lệch phải fail loud."""
+    d = SotGuardCfg()
+    for name in ("default.yaml", "sot_mcitrack.yaml"):
+        p = os.path.join(_CODE_ROOT, "uav_pipeline", "configs", name)
+        g = Config.from_yaml(p).sot.guard
+        assert g.gate == d.gate, (name, "gate", g.gate)
+        assert g.verify_every == d.verify_every, (name, "verify_every", g.verify_every)
+        assert g.K == d.K, (name, "K", g.K)
+        assert g.iou_gate == d.iou_gate, (name, "iou_gate", g.iou_gate)
+        assert g.jump.enabled == d.jump.enabled, (name, "jump.enabled", g.jump.enabled)
+        assert g.jump.px == d.jump.px, (name, "jump.px", g.jump.px)
+        assert g.jump.area == d.jump.area, (name, "jump.area", g.jump.area)
+        assert g.jump.ref_width == d.jump.ref_width, (name, "jump.ref_width", g.jump.ref_width)
+        assert g.motion.enabled == d.motion.enabled, (name, "motion.enabled", g.motion.enabled)
+        assert g.motion.iou == d.motion.iou, (name, "motion.iou", g.motion.iou)
+        assert g.motion.k == d.motion.k, (name, "motion.k", g.motion.k)
+    print("[ok] test_sot_guard_yaml_pins_calibrated_defaults")
 
 
 TESTS = [
@@ -916,6 +987,8 @@ TESTS = [
     test_config_sot_value_checks,
     test_config_nested_guard_defaults,
     test_config_warnings,
+    test_config_sot_follow_preferred_classes_with_init_bbox_is_error,
+    test_config_sot_follow_preferred_classes_without_init_bbox_is_warning,
     test_class_groups_gate_class,
     test_class_groups_gate_family,
     test_class_groups_presence_and_unknown,
@@ -965,6 +1038,7 @@ TESTS = [
     test_sot_config_yaml_loads_and_validates,
     test_default_yaml_is_sot,
     test_mot_configs_untouched,
+    test_sot_guard_yaml_pins_calibrated_defaults,
 ]
 
 

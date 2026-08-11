@@ -152,7 +152,7 @@ uav_pipeline/           ← repo root == the package (git clone produces this fo
 ├── follow/             # pid / selector / controller + controllers/{mock,mavlink,ros2}
 ├── sinks/              # HUD video / telemetry / control_log
 ├── scripts/            # run_pipeline / export_tensorrt / validate_pipeline
-└── configs/            # default / windows_onnx / windows_openvino / jetson_trt
+└── configs/            # default / windows_onnx / windows_openvino / jetson_trt / sot_mcitrack
 ```
 
 ---
@@ -319,6 +319,31 @@ vận tốc (mỗi frame), và verify bằng detector mỗi `verify_every` frame
 oan 6**. Ba ngưỡng hiện tại được calibrate trên 5 đối tượng của **một** sequence
 val. Bật guard là đánh đổi: bớt bám sai vật, thêm rủi ro cắt sớm. Tắt guard cho
 kết quả y hệt MCITrack gốc.
+
+**Vài điểm dễ gây bất ngờ khi vận hành**:
+
+- **`sot.init_bbox` / `--init-bbox` hạ gate của guard xuống `presence` âm
+  thầm.** Có `init_bbox` thì không có detection nào để lấy class từ đó —
+  `init_cls` là `-1`, `accepted_ids()` không tìm được nhóm nào trong bảng, và
+  guard tự hạ gate từ `class`/`family` xuống `presence` (log runtime:
+  `` [sot/guard] class '' (id -1) không có trong bảng nhóm -> hạ gate ... `` ).
+  **`sot.init_classes` chỉ chọn box khởi tạo lúc `acquire` bằng detector —
+  nó KHÔNG hề cấp dữ liệu cho gate của guard**, dù nó nằm ngay cạnh trong
+  config và trông như phải làm việc đó.
+- **Frame id lệch giữa 2 output.** `sinks.sot_result` (`sot_result.txt`) đánh số
+  1-indexed để khớp GT VisDrone; `sinks.telemetry` (`telemetry.jsonl`) ghi field
+  `frame` là `ctx.meta.idx`, 0-indexed. Cùng một frame ảnh sẽ có 2 số khác nhau
+  ở 2 file — đừng join 2 file này theo `frame` mà không cộng/trừ 1 trước.
+- **Sink trễ khi `sot.guard.motion.enabled=true`.** Guard có thể tuyên bố LOST
+  và cắt lui về frame đầu chuỗi nghi ngờ; để cắt lui còn kịp áp được, pipeline
+  hoãn ghi sink `motion.k - 1` frame (ở ngưỡng đã calibrate `k=2` là **1 frame**
+  trễ). Ai đọc `sot_result.txt`/`telemetry.jsonl` khi pipeline còn đang chạy
+  (không đợi tới `close()`) sẽ luôn thấy trễ đúng số frame này so với `frame`
+  in ra console.
+- **`configs/default.yaml` giờ chạy SOT, không còn "nhẹ dependency" nữa.** Nó
+  cần chạy trong `MCITrack/.venv`, một GPU CUDA, và checkpoint MCITrack 1.44 GB
+  (xem "Yêu cầu môi trường" ở trên) — không còn là reference ít phụ thuộc cho
+  mọi key như trước khi nhánh SOT được merge.
 
 ## Performance notes
 
