@@ -26,16 +26,26 @@ class DeferredSinkWriter:
               retract_from: Optional[int] = None):
         """provisional=True -> giữ lại. retract_from=<frame 1-indexed> -> cắt lui."""
         if retract_from is not None:
-            matched = any(h.meta.idx + 1 >= retract_from for h in self._held)
-            if not matched and ctx.meta.idx + 1 < retract_from:
-                # should-never-happen: guard tuyên bố cắt lui về 1 frame không
-                # nằm trong buffer đang giữ (_held) và cũng không phải chính
-                # frame hiện tại -> desync max_hold/motion.k hoặc thứ tự gọi
-                # sai. Chỉ log, không assert/raise vì đây là hot path.
+            # Cắt lui chỉ hợp lệ nếu MỌI frame có id >= retract_from vẫn còn
+            # nắm được: đang trong _held, hoặc chính là ctx đang tới. Nếu frame
+            # đang giữ SỚM NHẤT đã lớn hơn retract_from thì có khoảng hở
+            # [retract_from, earliest-1] đã bị ghi ra ngoài từ trước (ví dụ
+            # max_hold desync nhỏ hơn motion.k-1 khiến frame đầu chuỗi bị đẩy
+            # ra trước khi verdict LOST kịp tới) -> box sai đã lọt ra output mà
+            # không ai biết. earliest == retract_from là nhịp ĐÚNG, phải im.
+            if self._held:
+                earliest = self._held[0].meta.idx + 1
+                gap = earliest > retract_from
+            else:
+                gap = ctx.meta.idx + 1 > retract_from
+            if gap:
+                # should-never-happen: chỉ log, không assert/raise vì đây là
+                # hot path per-frame trong 1 lần chạy dài.
                 held_ids = [h.meta.idx + 1 for h in self._held]
-                print(f"[deferred] retract_from={retract_from} khong khop frame "
-                      f"nao dang giu (held={held_ids}) hoac ctx hien tai "
-                      f"(id={ctx.meta.idx + 1}) -> nghi desync max_hold/motion.k")
+                print(f"[deferred] retract_from={retract_from} nam ngoai vung "
+                      f"dang giu (held={held_ids}, ctx id={ctx.meta.idx + 1}) "
+                      f"-> it nhat 1 frame tu {retract_from} da bi ghi ra truoc "
+                      f"khi cat lui toi -> nghi desync max_hold/motion.k")
             for h in self._held:
                 if h.meta.idx + 1 >= retract_from:
                     h.tracks = []

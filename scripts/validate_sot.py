@@ -460,24 +460,48 @@ def test_deferred_second_close_does_not_double_emit():
     print("[ok] test_deferred_second_close_does_not_double_emit")
 
 
-def test_deferred_retract_from_desync_warns_but_does_not_crash():
-    """retract_from không khớp frame nào đang giữ và cũng không khớp ctx hiện
-    tại -> in cảnh báo [deferred] (should-never-happen: desync max_hold/motion.k),
-    nhưng KHÔNG raise/assert và KHÔNG làm sai luồng emit."""
+def test_deferred_retract_from_warns_when_gap_already_emitted():
+    """max_hold desync nhỏ hơn thực tế -> frame đầu chuỗi (streak-start) bị đẩy
+    ra ngoài (box còn NGUYÊN, chưa bị cắt) TRƯỚC KHI write() mang retract_from
+    tới. _held vẫn có 1 frame khác thoả >= retract_from nên phép kiểm tra kiểu
+    "any(...)" cũ bị qua mặt -> phải hỏi đúng câu: frame SỚM NHẤT còn giữ có
+    còn >= retract_from không, chứ không phải "có tồn tại frame nào".
+    """
     import contextlib
     import io
 
     out = []
     d = DeferredSinkWriter(out.append, max_hold=1)
-    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)))   # không có gì đang giữ
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)), provisional=True)
+    d.write(_ctx(1, Track(1, [0, 0, 10, 10], 0.9, 1)), provisional=True)  # đẩy frame 0 ra
+    assert [(c.meta.idx, bool(c.tracks)) for c in out] == [(0, True)], \
+        "frame 0 phải đã bị đẩy ra NGUYÊN box trước khi cắt lui tới"
+
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        # retract_from=99 không khớp _held (rỗng) và không khớp ctx id=2
-        d.write(_ctx(1, Track(1, [0, 0, 10, 10], 0.9, 1)), retract_from=99)
+        # cắt lui về frame_id=1 (chính là frame 0 vừa bị đẩy ra) -> đã trễ
+        d.write(_ctx(2), retract_from=1)
     assert "[deferred]" in buf.getvalue(), buf.getvalue()
-    assert [c.meta.idx for c in out] == [0, 1], "vẫn phải emit ctx như bình thường"
     d.close()
-    print("[ok] test_deferred_retract_from_desync_warns_but_does_not_crash")
+    print("[ok] test_deferred_retract_from_warns_when_gap_already_emitted")
+
+
+def test_deferred_retract_from_silent_on_normal_cut():
+    """Cắt lui ĐÚNG nhịp (frame sớm nhất đang giữ == retract_from) không được
+    in cảnh báo -> cảnh báo nổ mỗi frame còn tệ hơn im lặng nó thay thế."""
+    import contextlib
+    import io
+
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)))
+    d.write(_ctx(1, Track(1, [900, 900, 10, 10], 0.9, 1)), provisional=True)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        d.write(_ctx(2), retract_from=2)   # đúng nhịp: earliest held id == 2
+    assert buf.getvalue() == "", buf.getvalue()
+    d.close()
+    print("[ok] test_deferred_retract_from_silent_on_normal_cut")
 
 
 TESTS = [
@@ -511,7 +535,8 @@ TESTS = [
     test_deferred_close_flushes_pending,
     test_deferred_max_hold_zero_is_passthrough,
     test_deferred_second_close_does_not_double_emit,
-    test_deferred_retract_from_desync_warns_but_does_not_crash,
+    test_deferred_retract_from_warns_when_gap_already_emitted,
+    test_deferred_retract_from_silent_on_normal_cut,
 ]
 
 
