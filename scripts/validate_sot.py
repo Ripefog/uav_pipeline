@@ -441,6 +441,45 @@ def test_deferred_max_hold_zero_is_passthrough():
     print("[ok] test_deferred_max_hold_zero_is_passthrough")
 
 
+def test_deferred_second_close_does_not_double_emit():
+    """close() lần 2 (hoặc write() sau khi đã flush hết) không được emit lại.
+
+    Regression cụ thể mà test này bắt: nếu _flush() đổi từ
+    ``while self._held: self._emit(self._held.pop(0))`` sang
+    ``for h in self._held: self._emit(h)`` (quên pop) thì _held không bao giờ
+    rỗng -> close() lần 2 emit lại y hệt frame đã emit ở lần đầu.
+    """
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)), provisional=True)
+    d.close()
+    assert [c.meta.idx for c in out] == [0]
+    d.close()  # idempotent: hàng đã giữ đã trống, không có gì để emit lại
+    assert [c.meta.idx for c in out] == [0], \
+        "close() thu hai da emit lai frame cu -> double emit"
+    print("[ok] test_deferred_second_close_does_not_double_emit")
+
+
+def test_deferred_retract_from_desync_warns_but_does_not_crash():
+    """retract_from không khớp frame nào đang giữ và cũng không khớp ctx hiện
+    tại -> in cảnh báo [deferred] (should-never-happen: desync max_hold/motion.k),
+    nhưng KHÔNG raise/assert và KHÔNG làm sai luồng emit."""
+    import contextlib
+    import io
+
+    out = []
+    d = DeferredSinkWriter(out.append, max_hold=1)
+    d.write(_ctx(0, Track(1, [0, 0, 10, 10], 0.9, 0)))   # không có gì đang giữ
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        # retract_from=99 không khớp _held (rỗng) và không khớp ctx id=2
+        d.write(_ctx(1, Track(1, [0, 0, 10, 10], 0.9, 1)), retract_from=99)
+    assert "[deferred]" in buf.getvalue(), buf.getvalue()
+    assert [c.meta.idx for c in out] == [0, 1], "vẫn phải emit ctx như bình thường"
+    d.close()
+    print("[ok] test_deferred_retract_from_desync_warns_but_does_not_crash")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
@@ -471,6 +510,8 @@ TESTS = [
     test_deferred_retracts_held_frames_on_cut,
     test_deferred_close_flushes_pending,
     test_deferred_max_hold_zero_is_passthrough,
+    test_deferred_second_close_does_not_double_emit,
+    test_deferred_retract_from_desync_warns_but_does_not_crash,
 ]
 
 

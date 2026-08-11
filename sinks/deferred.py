@@ -26,6 +26,16 @@ class DeferredSinkWriter:
               retract_from: Optional[int] = None):
         """provisional=True -> giữ lại. retract_from=<frame 1-indexed> -> cắt lui."""
         if retract_from is not None:
+            matched = any(h.meta.idx + 1 >= retract_from for h in self._held)
+            if not matched and ctx.meta.idx + 1 < retract_from:
+                # should-never-happen: guard tuyên bố cắt lui về 1 frame không
+                # nằm trong buffer đang giữ (_held) và cũng không phải chính
+                # frame hiện tại -> desync max_hold/motion.k hoặc thứ tự gọi
+                # sai. Chỉ log, không assert/raise vì đây là hot path.
+                held_ids = [h.meta.idx + 1 for h in self._held]
+                print(f"[deferred] retract_from={retract_from} khong khop frame "
+                      f"nao dang giu (held={held_ids}) hoac ctx hien tai "
+                      f"(id={ctx.meta.idx + 1}) -> nghi desync max_hold/motion.k")
             for h in self._held:
                 if h.meta.idx + 1 >= retract_from:
                     h.tracks = []
