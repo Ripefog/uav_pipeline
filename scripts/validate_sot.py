@@ -568,6 +568,168 @@ def test_deferred_retract_from_warns_when_held_empty_and_ctx_ahead():
     print("[ok] test_deferred_retract_from_warns_when_held_empty_and_ctx_ahead")
 
 
+import numpy as np  # noqa: E402  (thêm vào đầu file)
+from uav_pipeline.sot.tracker import SotTracker  # noqa: E402
+
+
+class FakeModel:
+    """Model giả: trả trước một danh sách box, đếm số lần initialize."""
+
+    def __init__(self, boxes, score=0.9):
+        self.boxes = list(boxes)
+        self.score = score
+        self.n_init = 0
+        self.init_boxes = []
+
+    def initialize(self, frame, bbox_xywh):
+        self.n_init += 1
+        self.init_boxes.append(list(bbox_xywh))
+
+    def track(self, frame):
+        return list(self.boxes.pop(0)), self.score
+
+
+def _frame(w=1904, h=1071):
+    return np.zeros((h, w, 3), dtype=np.uint8)
+
+
+def _det(x1, y1, x2, y2, score, cls, name):
+    return Detection(x1=x1, y1=y1, x2=x2, y2=y2, score=score, cls=cls, name=name)
+
+
+def test_sot_acquire_scans_until_first_box():
+    """Frame đầu 0 box là bình thường (webcam/RTSP) -> quét tiếp, không crash."""
+    cfg = SotCfg(enabled=True)
+    empty_then = [[], [], [_det(100, 100, 140, 180, 0.8, 3, "car")]]
+    calls = {"i": 0}
+
+    def detect():
+        d = empty_then[calls["i"]]
+        calls["i"] += 1
+        return d
+
+    model = FakeModel([[100, 100, 40, 80]] * 5)
+    sot = SotTracker(cfg, VISDRONE, model)
+    assert sot.update(_frame(), 1, detect) == [] and sot.mode == "acquire"
+    assert sot.update(_frame(), 2, detect) == [] and sot.mode == "acquire"
+    tracks = sot.update(_frame(), 3, detect)
+    assert len(tracks) == 1 and sot.mode == "tracking"
+    assert model.n_init == 1
+    # frame init xuất box + conf của DETECTOR
+    t = tracks[0]
+    assert [round(v, 2) for v in t.bbox] == [100.0, 100.0, 140.0, 180.0], t.bbox
+    assert t.confidence == 0.8 and t.cls == 3 and t.name == "car"
+    print("[ok] test_sot_acquire_scans_until_first_box")
+
+
+def test_sot_picks_highest_conf_within_init_classes():
+    cfg = SotCfg(enabled=True, init_classes=[0, 1])
+    dets = [_det(0, 0, 100, 100, 0.95, 3, "car"),        # conf cao nhất nhưng sai class
+            _det(10, 10, 30, 60, 0.60, 0, "pedestrian"),
+            _det(50, 50, 70, 90, 0.80, 1, "people")]     # cao nhất TRONG nhóm
+    model = FakeModel([[50, 50, 20, 40]])
+    sot = SotTracker(cfg, VISDRONE, model)
+    t = sot.update(_frame(), 1, lambda: dets)[0]
+    assert t.cls == 1 and t.confidence == 0.80, (t.cls, t.confidence)
+    assert model.init_boxes[0] == [50.0, 50.0, 20.0, 40.0], model.init_boxes
+    print("[ok] test_sot_picks_highest_conf_within_init_classes")
+
+
+def test_sot_init_bbox_skips_detector():
+    """Có init_bbox thì KHÔNG gọi detector."""
+    cfg = SotCfg(enabled=True, init_bbox=[10.0, 20.0, 30.0, 40.0])
+    model = FakeModel([[10, 20, 30, 40]])
+
+    def detect():
+        raise AssertionError("không được gọi detector khi đã có init_bbox")
+
+    sot = SotTracker(cfg, VISDRONE, model)
+    t = sot.update(_frame(), 1, detect)[0]
+    assert model.init_boxes[0] == [10.0, 20.0, 30.0, 40.0]
+    assert [round(v, 2) for v in t.bbox] == [10.0, 20.0, 40.0, 60.0], t.bbox
+    assert sot.last_detections == []
+    print("[ok] test_sot_init_bbox_skips_detector")
+
+
+def test_sot_tracking_updates_same_track_id_and_age():
+    """Phải gọi Track.update() mỗi frame: follow/selector.py:14 lọc age == 0."""
+    cfg = SotCfg(enabled=True)
+    model = FakeModel([[110, 100, 40, 80], [120, 100, 40, 80]])
+    sot = SotTracker(cfg, VISDRONE, model)
+    sot.update(_frame(), 1, lambda: [_det(100, 100, 140, 180, 0.8, 3, "car")])
+    t1 = sot.update(_frame(), 2, lambda: [])[0]
+    t2 = sot.update(_frame(), 3, lambda: [])[0]
+    assert t1.track_id == t2.track_id == 1
+    assert t2.age == 0, "age phải là 0 nếu không follow sẽ bỏ qua target"
+    assert len(t2.trajectory) == 3
+    assert float(t2.velocity[0]) == 10.0, t2.velocity
+    print("[ok] test_sot_tracking_updates_same_track_id_and_age")
+
+
+def test_sot_lost_stop_emits_nothing_forever():
+    cfg = SotCfg(enabled=True, on_lost="stop")
+    cfg.guard.enabled = True
+    cfg.guard.motion.enabled = False
+    cfg.guard.verify_every = 0          # tắt tầng verify, chỉ dùng jump
+    model = FakeModel([[110, 100, 40, 80], [900, 900, 40, 80],
+                       [905, 905, 40, 80], [910, 910, 40, 80]])
+    sot = SotTracker(cfg, VISDRONE, model)
+    sot.update(_frame(), 1, lambda: [_det(100, 100, 140, 180, 0.8, 3, "car")])
+    assert sot.update(_frame(), 2, lambda: [])
+    assert sot.update(_frame(), 3, lambda: []) == [], "cú nhảy -> LOST"
+    assert sot.mode == "lost" and sot.lost_at == 3, (sot.mode, sot.lost_at)
+    assert sot.retract_from == 3
+    assert sot.update(_frame(), 4, lambda: []) == []
+    assert sot.retract_from is None, "retract_from chỉ set đúng 1 frame"
+    assert "LOST" in sot.status
+    print("[ok] test_sot_lost_stop_emits_nothing_forever")
+
+
+def test_sot_reacquire_increments_id_and_reinitializes():
+    cfg = SotCfg(enabled=True, on_lost="reacquire")
+    cfg.guard.enabled = True
+    cfg.guard.motion.enabled = False
+    cfg.guard.verify_every = 0
+    model = FakeModel([[110, 100, 40, 80], [900, 900, 40, 80], [210, 210, 40, 80]])
+    car = [_det(100, 100, 140, 180, 0.8, 3, "car")]
+    sot = SotTracker(cfg, VISDRONE, model)
+    sot.update(_frame(), 1, lambda: car)
+    sot.update(_frame(), 2, lambda: [])
+    assert sot.update(_frame(), 3, lambda: []) == []
+    assert sot.mode == "acquire", sot.mode
+    t = sot.update(_frame(), 4, lambda: [_det(200, 200, 240, 280, 0.7, 3, "car")])[0]
+    assert t.track_id == 2, "reacquire phải tăng track_id"
+    assert model.n_init == 2, "phải initialize lại (reset h_state) chứ không track tiếp"
+    print("[ok] test_sot_reacquire_increments_id_and_reinitializes")
+
+
+def test_sot_needs_deferral_flag():
+    on = SotCfg(enabled=True)
+    on.guard.enabled = True
+    assert SotTracker(on, VISDRONE, FakeModel([])).needs_deferral is True
+    off = SotCfg(enabled=True)
+    assert SotTracker(off, VISDRONE, FakeModel([])).needs_deferral is False
+    no_motion = SotCfg(enabled=True)
+    no_motion.guard.enabled = True
+    no_motion.guard.motion.enabled = False
+    assert SotTracker(no_motion, VISDRONE, FakeModel([])).needs_deferral is False
+    print("[ok] test_sot_needs_deferral_flag")
+
+
+def test_sot_prefetched_detections_not_detected_twice():
+    """detect_every_frame=true: pipeline đã detect rồi -> không gọi lại."""
+    cfg = SotCfg(enabled=True, detect_every_frame=True)
+    dets = [_det(100, 100, 140, 180, 0.8, 3, "car")]
+
+    def detect():
+        raise AssertionError("đã có prefetched, không được detect lần 2")
+
+    sot = SotTracker(cfg, VISDRONE, FakeModel([[100, 100, 40, 80]]))
+    assert sot.update(_frame(), 1, detect, prefetched=dets)
+    assert sot.last_detections == dets
+    print("[ok] test_sot_prefetched_detections_not_detected_twice")
+
+
 def test_deferred_retract_from_silent_when_held_empty_and_ctx_matches():
     """max_hold=0, _held rỗng, retract_from đúng bằng chính ctx đang tới
     (ctx.idx+1 == retract_from) -> nhịp ĐÚNG, phải im lặng, không warn."""
@@ -625,6 +787,14 @@ TESTS = [
     test_deferred_retract_from_silent_on_normal_cut,
     test_deferred_retract_from_warns_when_held_empty_and_ctx_ahead,
     test_deferred_retract_from_silent_when_held_empty_and_ctx_matches,
+    test_sot_acquire_scans_until_first_box,
+    test_sot_picks_highest_conf_within_init_classes,
+    test_sot_init_bbox_skips_detector,
+    test_sot_tracking_updates_same_track_id_and_age,
+    test_sot_lost_stop_emits_nothing_forever,
+    test_sot_reacquire_increments_id_and_reinitializes,
+    test_sot_needs_deferral_flag,
+    test_sot_prefetched_detections_not_detected_twice,
 ]
 
 
