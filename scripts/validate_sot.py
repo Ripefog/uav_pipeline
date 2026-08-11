@@ -16,7 +16,10 @@ if _CODE_ROOT not in sys.path:
     sys.path.insert(0, _CODE_ROOT)
 
 from uav_pipeline.config import Config  # noqa: E402
+from uav_pipeline.config import SotGuardCfg  # noqa: E402  (thêm cùng import Config)
+from uav_pipeline.contracts import Detection  # noqa: E402
 from uav_pipeline.sot.class_groups import accepted_ids  # noqa: E402
+from uav_pipeline.sot.guard import LostGuard, iou_xywh  # noqa: E402
 
 
 def test_config_defaults_backward_compatible():
@@ -132,6 +135,193 @@ def test_class_groups_missing_name_in_names():
     print("[ok] test_class_groups_missing_name_in_names")
 
 
+def _guard(width=1904, init_cls=3, **over):
+    """SotGuardCfg bật sẵn, cho phép override từng key lồng nhau."""
+    cfg = SotGuardCfg(enabled=True)
+    for k, v in over.items():
+        if "." in k:
+            a, b = k.split(".", 1)
+            setattr(getattr(cfg, a), b, v)
+        else:
+            setattr(cfg, k, v)
+    return LostGuard(cfg, width, init_cls, VISDRONE)
+
+
+def _no_det():
+    return []
+
+
+def test_iou_xywh():
+    assert iou_xywh([0, 0, 10, 10], [0, 0, 10, 10]) == 1.0
+    assert iou_xywh([0, 0, 10, 10], [20, 20, 10, 10]) == 0.0
+    assert abs(iou_xywh([0, 0, 10, 10], [5, 0, 10, 10]) - (50 / 150)) < 1e-9
+    assert iou_xywh([0, 0, 0, 0], [0, 0, 0, 0]) == 0.0   # box rỗng, không chia 0
+    print("[ok] test_iou_xywh")
+
+
+def test_guard_off_never_lost():
+    """guard.enabled=false phải là hành vi MCITrack gốc: không bao giờ LOST."""
+    cfg = SotGuardCfg(enabled=False)
+    g = LostGuard(cfg, 1904, 3, VISDRONE)
+    boxes = [[0, 0, 10, 10], [900, 900, 300, 300], [0, 0, 10, 10]]  # nhảy lung tung
+    for i, b in enumerate(boxes, start=2):
+        v = g.step(i, b, _no_det)
+        assert v.alive and not v.provisional, (i, v)
+    print("[ok] test_guard_off_never_lost")
+
+
+def test_guard_first_frame_never_jumps():
+    """Frame tracker ĐẦU TIÊN không được đem so với gì cả.
+
+    Box detector và box MCITrack là 2 estimator khác nhau cho cùng vật -> chênh
+    scale ở frame 2 là bình thường. Trước khi sửa, uav0000117_02622_v_car LOST oan
+    ngay frame 2 (1/349 frame alive).
+    """
+    g = _guard()
+    v = g.step(2, [1000, 500, 40, 40], _no_det)   # rất khác box init, vẫn phải sống
+    assert v.alive and v.lost_at is None, v
+    print("[ok] test_guard_first_frame_never_jumps")
+
+
+def test_guard_jump_detector_catches_real_drift():
+    """Cú nhảy thật của car uav0000339_00001_v f63->f64: 337px, 226x224 -> 74x64."""
+    g = _guard(**{"motion.enabled": False})
+    assert g.step(63, [500, 500, 226, 224], _no_det).alive
+    v = g.step(64, [800, 640, 74, 64], _no_det)
+    assert not v.alive and v.lost_at == 64, v
+    assert "jump" in v.reason, v.reason
+    print("[ok] test_guard_jump_detector_catches_real_drift")
+
+
+def test_guard_jump_tolerates_real_gt_motion():
+    """Chuyển động GT thật của 5 vật (n=708): max 44px/frame, max area x1.44."""
+    g = _guard(**{"motion.enabled": False})
+    box = [500.0, 500.0, 100.0, 100.0]
+    for i in range(2, 30):
+        box = [box[0] + 44.0, box[1], box[2] * 1.012, box[3] * 1.012]
+        v = g.step(i, list(box), _no_det)
+        assert v.alive, (i, v.reason)
+    print("[ok] test_guard_jump_tolerates_real_gt_motion")
+
+
+def test_guard_jump_px_scales_with_resolution():
+    """VisDrone trải 1344x756 -> 3840x2160 (2.86x). Ngưỡng px TUYỆT ĐỐI không
+    scale sẽ báo oan trên video 4K và bỏ sót drift trên video nhỏ."""
+    small = _guard(width=1344, **{"motion.enabled": False})
+    big = _guard(width=3840, **{"motion.enabled": False})
+    assert abs(small.jump_px - 90.0 * 1344 / 1904) < 1e-6, small.jump_px
+    assert abs(big.jump_px - 90.0 * 3840 / 1904) < 1e-6, big.jump_px
+    # dịch 120px: quá ngưỡng trên video nhỏ (63.5), chưa quá trên video 4K (181.5)
+    for g, expect_alive in ((small, False), (big, True)):
+        g.step(2, [500, 500, 100, 100], _no_det)
+        v = g.step(3, [620, 500, 100, 100], _no_det)
+        assert v.alive is expect_alive, (g.jump_px, v)
+    print("[ok] test_guard_jump_px_scales_with_resolution")
+
+
+def test_guard_motion_gate_cuts_back_to_streak_start():
+    """motion.k=2: frame đầu chuỗi là provisional (hoãn ghi), frame thứ 2 mới
+    tuyên bố LOST và cắt LUI về frame đầu chuỗi — box sai không được lọt ra."""
+    g = _guard(**{"jump.enabled": False})
+    # 3 frame đi thẳng đều để có mốc dự đoán
+    for i, x in ((2, 500), (3, 510), (4, 520)):
+        assert g.step(i, [x, 500, 100, 100], _no_det).alive
+    # f5, f6 lệch hẳn khỏi dự đoán (dự đoán ~530)
+    v5 = g.step(5, [900, 900, 100, 100], _no_det)
+    assert v5.alive and v5.provisional, v5
+    v6 = g.step(6, [905, 905, 100, 100], _no_det)
+    assert not v6.alive and v6.lost_at == 5, v6
+    assert "motion" in v6.reason, v6.reason
+    print("[ok] test_guard_motion_gate_cuts_back_to_streak_start")
+
+
+def test_guard_motion_gate_recovers_without_lost():
+    """Chuỗi bị ngắt -> frame đang giữ là hợp lệ, không LOST."""
+    g = _guard(**{"jump.enabled": False})
+    for i, x in ((2, 500), (3, 510), (4, 520)):
+        g.step(i, [x, 500, 100, 100], _no_det)
+    assert g.step(5, [900, 900, 100, 100], _no_det).provisional
+    v = g.step(6, [540, 500, 100, 100], _no_det)   # về đúng quỹ đạo
+    assert v.alive and not v.provisional and v.lost_at is None, v
+    print("[ok] test_guard_motion_gate_recovers_without_lost")
+
+
+def test_guard_motion_gate_does_not_poison_itself():
+    """Mốc dự đoán CHỈ cập nhật từ frame đã được chấp nhận.
+
+    Đo thật trên uav0000086 person rank 4: f148 giật 35px, f149-150 đã về đúng
+    (IoU vs GT 0.66) nhưng nếu để f148 làm mốc thì IoU vs dự đoán vẫn 0.000 ->
+    luôn sinh >=2 vi phạm liên tiếp -> LOST oan.
+    """
+    g = _guard(**{"jump.enabled": False})
+    for i, x in ((2, 500), (3, 510), (4, 520)):
+        g.step(i, [x, 500, 100, 100], _no_det)
+    # DEVIATION (xem task-3-report.md): dự đoán tại f5 là [530,500,100,100]. Box
+    # [560,535,100,100] của brief cho IoU=0.294 vs dự đoán -> KHÔNG dưới ngưỡng
+    # motion.iou=0.05 nên không bao giờ provisional (test gốc tự mâu thuẫn với
+    # threshold đã calibrate ở box 100x100). Giữ ý real "IoU vs dự đoán 0.000",
+    # đổi sang lệch hẳn (0 overlap) để test đúng ý đồ mà không đụng threshold.
+    assert g.step(5, [650, 600, 100, 100], _no_det).provisional      # 1 frame giật
+    # 2 frame sau đã về đúng quỹ đạo cũ (530, 540) -> phải sống, không LOST
+    assert g.step(6, [540, 500, 100, 100], _no_det).alive
+    v = g.step(7, [550, 500, 100, 100], _no_det)
+    assert v.alive and v.lost_at is None, v
+    print("[ok] test_guard_motion_gate_does_not_poison_itself")
+
+
+def test_guard_verify_needs_prior_confirmation():
+    """Tầng verify chỉ được kết án track mà detector ĐÃ TỪNG xác nhận.
+
+    Vật 26x41 px của uav0000339: detector 0 hit ở f10..f50 trong khi tracker vẫn
+    đúng (IoU vs GT 0.67-0.75). Không có latch thì cắt oan ở f30.
+    """
+    g = _guard(**{"jump.enabled": False, "motion.enabled": False})
+    for i in range(2, 61):
+        v = g.step(i, [500, 500, 26, 41], _no_det)     # detector không thấy gì
+        assert v.alive, (i, v.reason)
+    print("[ok] test_guard_verify_needs_prior_confirmation")
+
+
+def test_guard_verify_cuts_after_confirmation():
+    """Đã xác nhận 1 lần rồi mất K=3 lần verify liên tiếp -> LOST."""
+    g = _guard(**{"jump.enabled": False, "motion.enabled": False})
+    hit = [Detection(x1=500, y1=500, x2=600, y2=600, score=0.9, cls=3, name="car")]
+
+    def det_hit():
+        return hit
+
+    for i in range(2, 11):
+        assert g.step(i, [500, 500, 100, 100], det_hit).alive
+    assert g.step(10, [500, 500, 100, 100], det_hit).alive       # verify HIT -> latch
+    lost = None
+    for i in range(11, 60):
+        v = g.step(i, [500, 500, 100, 100], _no_det)             # verify MISS
+        if not v.alive:
+            lost = v
+            break
+    # DEVIATION (xem task-3-report.md): K=3 nghia la 3 MISS lien tiep -> LOST (dung
+    # voi "longest legitimate streak = 2" trong brief). MISS o f20,f30,f40 la du 3
+    # lan -> LOST ngay f40, khong can f50 (brief goc ghi lost_at==50 la sai 1 nhip).
+    assert lost is not None and lost.lost_at == 40, lost   # MISS ở f20,f30,f40
+    assert "verify" in lost.reason.lower(), lost.reason
+    print("[ok] test_guard_verify_cuts_after_confirmation")
+
+
+def test_guard_verify_class_gate_rejects_wrong_class():
+    """gate=class: detection trùng vị trí nhưng SAI class thì không tính là HIT."""
+    g = _guard(init_cls=3, **{"jump.enabled": False, "motion.enabled": False})
+    person = [Detection(x1=500, y1=500, x2=600, y2=600, score=0.9,
+                        cls=0, name="pedestrian")]
+    assert g._verify_hit(person, [500, 500, 100, 100]) is False
+    car = [Detection(x1=500, y1=500, x2=600, y2=600, score=0.9, cls=3, name="car")]
+    assert g._verify_hit(car, [500, 500, 100, 100]) is True
+    # gate=presence: bỏ qua class -> person cũng tính là HIT
+    gp = _guard(init_cls=3, gate="presence",
+                **{"jump.enabled": False, "motion.enabled": False})
+    assert gp._verify_hit(person, [500, 500, 100, 100]) is True
+    print("[ok] test_guard_verify_class_gate_rejects_wrong_class")
+
+
 TESTS = [
     test_config_defaults_backward_compatible,
     test_config_mutual_exclusion,
@@ -142,6 +332,18 @@ TESTS = [
     test_class_groups_gate_family,
     test_class_groups_presence_and_unknown,
     test_class_groups_missing_name_in_names,
+    test_iou_xywh,
+    test_guard_off_never_lost,
+    test_guard_first_frame_never_jumps,
+    test_guard_jump_detector_catches_real_drift,
+    test_guard_jump_tolerates_real_gt_motion,
+    test_guard_jump_px_scales_with_resolution,
+    test_guard_motion_gate_cuts_back_to_streak_start,
+    test_guard_motion_gate_recovers_without_lost,
+    test_guard_motion_gate_does_not_poison_itself,
+    test_guard_verify_needs_prior_confirmation,
+    test_guard_verify_cuts_after_confirmation,
+    test_guard_verify_class_gate_rejects_wrong_class,
 ]
 
 
