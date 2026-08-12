@@ -18,7 +18,8 @@ from .contracts import Detection, FrameContext, FrameMeta
 from .detect.wrapper import UnifiedDetector
 from .follow import FollowController, make_controller
 from .ocr import PlateOCR, PlateVoter, lower_third_crop
-from .sinks import ControlLogSink, HUDAnnotatedSink, Sink, TelemetrySink
+from .sinks import (ControlLogSink, DeferredSinkWriter, HUDAnnotatedSink, Sink,
+                    SotResultSink, TelemetrySink)
 from .sources import make_source
 from .track import DroneByteTracker
 
@@ -26,6 +27,15 @@ from .track import DroneByteTracker
 class Pipeline:
     def __init__(self, config: Config):
         self.cfg = config
+
+        # Fail-fast: scripts/run_pipeline.py đã validate trước khi tới đây, nhưng
+        # eval_mot_visdrone.py và bất kỳ caller nào khác construct Pipeline(cfg)
+        # trực tiếp thì không. Chặn ở đây trước khi load detector/MCITrack (tốn
+        # thời gian) để lỗi cấu hình chết sớm, chết rõ — không phải AttributeError
+        # 'NoneType' sau khi model đã load xong.
+        errs = config.validate()
+        if errs:
+            raise SystemExit("[pipeline] cấu hình lỗi:\n  - " + "\n  - ".join(errs))
 
         # ---- source ----
         self.source = make_source(config.source)
@@ -53,8 +63,20 @@ class Pipeline:
                 print("[pipeline] OCR enabled but ocr.keras_model / ocr.plate_config "
                       "not set — skipping OCR.")
 
-        # ---- track / follow / control ----
-        self.tracker = DroneByteTracker(config.tracker)
+        # ---- track: MOT hoặc SOT, loại trừ nhau (Config.validate() đã chặn) ----
+        self.tracker = DroneByteTracker(config.tracker) if config.tracker.enabled else None
+        self.sot = None
+        if config.sot.enabled:
+            # batch>1 chỉ có nghĩa khi detector chạy MỌI frame. Với SOT thì detector
+            # chỉ cần ở frame acquire/verify -> gom batch là detect thừa ~90%.
+            if not config.sot.detect_every_frame and int(getattr(config.detector, "batch", 1)) > 1:
+                print(f"[pipeline] SOT + detect_every_frame=false -> ép "
+                      f"detector.batch {config.detector.batch} -> 1")
+                config.detector.batch = 1
+            from .sot import SotTracker
+            from .sot.mcitrack_wrapper import build_mcitrack_model
+            self.sot = SotTracker(config.sot, self.detector.names,
+                                  build_mcitrack_model(config.sot))
         self.follower = FollowController(config.follow)
         self.controller = make_controller(config.controller)
 
@@ -67,6 +89,8 @@ class Pipeline:
             self.sinks.append(TelemetrySink(config.sinks.telemetry))
         if config.sinks.control_log.enabled:
             self.sinks.append(ControlLogSink(config.sinks.control_log))
+        if config.sot.enabled and config.sinks.sot_result.enabled:
+            self.sinks.append(SotResultSink(config.sinks.sot_result))
 
         # ---- state ----
         self.fps = 0.0            # full pipeline incl. video sink write
@@ -79,6 +103,19 @@ class Pipeline:
         self._stop = False
         self._n_frames = 0
 
+        # Guard có thể tuyên bố LOST rồi cắt LUI về frame đầu chuỗi. Stream thì
+        # frame đã ghi không lấy lại được -> hoãn ghi motion.k-1 frame.
+        self._deferred = None
+        if self.sot is not None and self.sot.needs_deferral:
+            # ⚠ max_hold PHẢI bằng guard.motion.k - 1 (không phải hằng số): guard
+            # cắt lui tối đa k-1 frame về trước, writer phải giữ đủ để retract
+            # không lọt box sai ra sink đã ghi. Lệch 2 số này -> writer log cảnh
+            # báo "desync max_hold/motion.k" nhưng KHÔNG chặn được frame sai.
+            hold = max(0, config.sot.guard.motion.k - 1)
+            self._deferred = DeferredSinkWriter(self._write_sinks_now, max_hold=hold)
+            print(f"[pipeline] SOT guard motion=on -> hoãn ghi sink {hold} frame "
+                  f"(để cắt lui không lọt box sai)")
+
     # ------------------------------------------------------------------ #
     def stop(self):
         self._stop = True
@@ -86,6 +123,7 @@ class Pipeline:
     def run(self):
         print(f"[pipeline] source={self.cfg.source.type} "
               f"backend={self.cfg.detector.backend} "
+              f"track={'SOT' if self.sot is not None else 'MOT'} "
               f"ocr={'on' if self.plate_ocr else 'off'} "
               f"controller={self.cfg.controller.backend}")
         batch = max(1, int(getattr(self.cfg.detector, "batch", 1)))
@@ -129,6 +167,13 @@ class Pipeline:
             self._write_sinks(ctx)
 
     def _write_sinks(self, ctx: FrameContext):
+        if self._deferred is not None:
+            self._deferred.write(ctx, provisional=self.sot.provisional,
+                                 retract_from=self.sot.retract_from)
+        else:
+            self._write_sinks_now(ctx)
+
+    def _write_sinks_now(self, ctx: FrameContext):
         for s in self.sinks:
             if isinstance(s, HUDAnnotatedSink):
                 t0 = time.monotonic()
@@ -147,16 +192,28 @@ class Pipeline:
             print(f"[pipeline] resolution={w}x{h}")
         print(f"[pipeline] frame {self._n_frames}/{total if total else '?'}")
 
-        # detect (primary, + optional plate detector)
-        if detections is None:
+        # detect (primary, + optional plate detector) + track
+        def _detect_now():
             t0 = time.monotonic()
-            detections = self.detector.detect(frame)
+            d = self.detector.detect(frame)
             self._t_detect_total += time.monotonic() - t0
-        plates = self.detector.detect_plates(frame) if self.detector.plate_enabled else []
+            return d
 
-        # track
-        tracks = self.tracker.update(frame, detections)
-        self.tracker.record_for_interpolation(meta.idx, tracks)
+        if self.sot is not None:
+            # SOT: detector chỉ chạy ở frame acquire/verify, trừ khi
+            # detect_every_frame=true. SotTracker tự quyết (xem sot/tracker.py).
+            if self.cfg.sot.detect_every_frame and detections is None:
+                detections = _detect_now()
+            tracks = self.sot.update(frame, meta.idx + 1, _detect_now,
+                                     prefetched=detections)
+            detections = self.sot.last_detections
+            plates = []
+        else:
+            if detections is None:
+                detections = _detect_now()
+            plates = self.detector.detect_plates(frame) if self.detector.plate_enabled else []
+            tracks = self.tracker.update(frame, detections)
+            self.tracker.record_for_interpolation(meta.idx, tracks)
 
         # ocr (throttled, per track)
         if self.plate_ocr is not None:
@@ -216,10 +273,12 @@ class Pipeline:
 
     def _extra_stats(self):
         stats = {}
-        if self.tracker.cmc is not None:
+        if self.tracker is not None and self.tracker.cmc is not None:
             sev = float(self.tracker.last_motion.get("severity", 0.0))
             bar = ("#" * int(sev * 10)).ljust(10, "-")
             stats["motion"] = f"{bar} {sev:.2f}"
+        if self.sot is not None:
+            stats["sot"] = self.sot.status
         return stats
 
     def _update_fps(self):
@@ -245,8 +304,13 @@ class Pipeline:
 
     # ------------------------------------------------------------------ #
     def close(self):
-        # post-processing interpolation (for offline MOT export; not drawn live)
-        if self.cfg.tracker.interpolate_max_gap > 0 and self.tracker.frame_count > 0:
+        # flush frame đang bị hoãn trước khi đóng sink
+        if self._deferred is not None:
+            self._deferred.close()
+
+        # post-processing interpolation (chỉ có ở đường MOT)
+        if self.tracker is not None and self.cfg.tracker.interpolate_max_gap > 0 \
+                and self.tracker.frame_count > 0:
             interp = self.tracker.interpolate_tracks(self.cfg.tracker.interpolate_max_gap)
             if interp:
                 print(f"[pipeline] interpolated {sum(len(v) for v in interp.values())} "
@@ -261,7 +325,12 @@ class Pipeline:
         print(f"[pipeline] avg FPS (full)   : {self.fps:.1f}")
         print(f"[pipeline] avg FPS (detect) : {self.fps_detect:.1f}")
         print(f"[pipeline] avg FPS (pipe)   : {self.fps_pipeline:.1f}  (detect+track+follow+jsonl, excl. video write)")
-        print(f"[pipeline] {self.tracker.get_stats()}")
+        if self.tracker is not None:
+            print(f"[pipeline] {self.tracker.get_stats()}")
+        if self.sot is not None:
+            print(f"[pipeline] SOT {self.sot.status}"
+                  + (f"  (LOST @{self.sot.lost_at}: {self.sot.lost_reason})"
+                     if self.sot.lost_at is not None else ""))
         print("-" * 60)
 
 

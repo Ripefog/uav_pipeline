@@ -37,7 +37,7 @@ class TelemetrySink(Sink):
                 self._csv_writer = csv.writer(self._csv)
                 self._csv_writer.writerow(
                     ["frame", "fps", "n_det", "n_trk", "mode", "target_id",
-                     "yaw", "pitch", "forward", "vertical", "target_lost"])
+                     "yaw", "pitch", "forward", "vertical", "target_lost", "sot"])
 
     def write(self, ctx: FrameContext):
         if self._fjson is None:
@@ -52,6 +52,7 @@ class TelemetrySink(Sink):
             "mode": ctx.follow_state.mode,
             "target_id": ctx.follow_state.target_id,
             "motion": ctx.extra_stats.get("motion", ""),
+            "sot": ctx.extra_stats.get("sot", ""),
             "tracks": [t.as_dict() for t in ctx.tracks],
             "command": (None if cmd is None else {
                 "yaw_rate": round(cmd.yaw_rate, 4),
@@ -74,6 +75,7 @@ class TelemetrySink(Sink):
                 "" if cmd is None else round(cmd.forward_vel, 3),
                 "" if cmd is None else round(cmd.vertical_vel, 3),
                 "" if cmd is None else int(cmd.target_lost),
+                ctx.extra_stats.get("sot", ""),
             ])
 
     def close(self):

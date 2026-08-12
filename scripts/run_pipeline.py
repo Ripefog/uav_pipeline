@@ -27,6 +27,13 @@ def main():
     ap.add_argument("--source-type", default="", help="Override source.type")
     ap.add_argument("--no-video", action="store_true", help="Disable the annotated video sink")
     ap.add_argument("--no-follow", action="store_true", help="Disable the Follow layer")
+    ap.add_argument("--sot", action="store_true",
+                    help="bật SOT (MCITrack) và tắt MOT")
+    ap.add_argument("--no-sot", action="store_true",
+                    help="tắt SOT và bật MOT")
+    ap.add_argument("--init-bbox", default="",
+                    help="'x,y,w,h' pixel ảnh gốc cho SOT; rỗng = detector tự lấy "
+                         "box conf cao nhất")
     args = ap.parse_args()
 
     cfg = Config.from_yaml(args.config)
@@ -40,6 +47,25 @@ def main():
         cfg.sinks.video.enabled = False
     if args.no_follow:
         cfg.follow.enabled = False
+
+    if args.sot and args.no_sot:
+        sys.exit("[run_pipeline] --sot và --no-sot loại trừ nhau")
+    if args.sot:
+        cfg.sot.enabled, cfg.tracker.enabled = True, False
+    if args.no_sot:
+        cfg.sot.enabled, cfg.tracker.enabled = False, True
+    if args.init_bbox:
+        try:
+            cfg.sot.init_bbox = [float(v) for v in args.init_bbox.split(",")]
+        except ValueError:
+            sys.exit(f"[run_pipeline] --init-bbox phải là 'x,y,w,h', "
+                     f"đang là '{args.init_bbox}'")
+
+    errs = cfg.validate()
+    if errs:
+        sys.exit("[run_pipeline] config lỗi:\n  - " + "\n  - ".join(errs))
+    for w in cfg.warnings():
+        print(f"[run_pipeline] CẢNH BÁO: {w}")
 
     if cfg.source.type in ("video", "image_dir") and not cfg.source.path:
         sys.exit(f"[run_pipeline] source.path is empty for type '{cfg.source.type}'. "
