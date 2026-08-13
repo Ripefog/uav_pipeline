@@ -1,10 +1,10 @@
-# Jetson Orin preset — TensorRT engine (YOLOX-S, full precision, batch=16)
+# Jetson Orin preset — TensorRT FP16 engine (YOLOX-S, batch=16)
 # + GStreamer CSI/RTSP. Prereq: build the engine on the Jetson itself (engines
 # are per-device/per-arch, not portable from an x86_64 dev box), e.g.
 #   python -m uav_pipeline.scripts.export_tensorrt \
 #       --onnx weights/best_yoloxs.onnx \
-#       --engine weights/best_yoloxs.engine \
-#       --imgsz 736 1280 --batch 16 --no-fp16
+#       --engine weights/best_yoloxs_fp16.engine \
+#       --imgsz 736 1280 --batch 16 --fp16
 # batch must match export --batch exactly (yoloxs is much lighter than
 # yoloxx, so batch=16 is expected to fit on an 8GB Orin NX; untested — if it
 # OOMs, drop --batch to 8/4, no code change needed).
@@ -25,10 +25,10 @@ detector:
   imgsz: [736, 1280]   # must match the engine's fixed H/W (export --imgsz)
   conf: 0.25
   iou: 0.45
-  fp16: false          # full-precision engine (export --no-fp16)
+  fp16: true           # FP16 engine (export --fp16)
   classes_of_interest: []
   primary:
-    trt: weights/best_yoloxs.engine
+    trt: weights/best_yoloxs_fp16.engine
     names_yaml: weights/names.yaml
 
 ocr:
