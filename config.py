@@ -182,6 +182,8 @@ class SotCfg:
     config: str = "mcitrack_l384"      # experiments/mcitrack/<config>.yaml
     dataset_preset: str = "uav"        # chọn preset UPT/UPH/INTER/MB
     device: str = "cuda:0"             # 'cuda' hoặc 'cuda:N'
+    fp16: bool = False                  # CUDA autocast trong initialize/track
+    disable_grad_checkpoint: bool = False  # checkpoint chỉ hữu ích khi training
     init_bbox: Optional[List[float]] = None   # [x,y,w,h]; None = detector tự lấy
     init_classes: List[int] = field(default_factory=list)  # [] = theo detector.classes_of_interest
     detect_every_frame: bool = False

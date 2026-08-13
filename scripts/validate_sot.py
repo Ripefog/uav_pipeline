@@ -374,17 +374,26 @@ def test_preflight_bad_root():
 
 def test_preflight_good_root_reports_only_gpu_issues():
     """Root đúng -> không còn lỗi về path. Lỗi GPU (nếu có) là chuyện khác."""
-    errs = preflight(SotCfg(mcitrack_root="/home/anlnm/UAV/MCITrack"))
-    assert not any("mcitrack_root" in e for e in errs), errs
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        required = os.path.join(root, "lib", "test", "evaluation")
+        os.makedirs(required)
+        open(os.path.join(required, "tracker.py"), "a").close()
+        errs = preflight(SotCfg(mcitrack_root=root))
+        assert not any("mcitrack_root" in e for e in errs), errs
     print("[ok] test_preflight_good_root_reports_only_gpu_issues")
 
 
 def test_preflight_bad_device_index():
     import torch
+    import tempfile
     n = torch.cuda.device_count()
-    errs = preflight(SotCfg(mcitrack_root="/home/anlnm/UAV/MCITrack",
-                            device=f"cuda:{n + 5}"))
-    assert any("GPU" in e for e in errs), errs
+    with tempfile.TemporaryDirectory() as root:
+        required = os.path.join(root, "lib", "test", "evaluation")
+        os.makedirs(required)
+        open(os.path.join(required, "tracker.py"), "a").close()
+        errs = preflight(SotCfg(mcitrack_root=root, device=f"cuda:{n + 5}"))
+        assert any("GPU" in e for e in errs), errs
     print("[ok] test_preflight_bad_device_index")
 
 

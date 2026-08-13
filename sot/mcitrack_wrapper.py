@@ -19,6 +19,8 @@ phần "bẩn" mà repo MCITrack bắt buộc phải có:
 """
 import os
 import sys
+import types
+from contextlib import contextmanager
 from typing import List, Sequence, Tuple
 
 import cv2
@@ -84,12 +86,12 @@ def preflight(cfg: SotCfg) -> List[str]:
     try:
         import torch
     except ImportError:
-        errs.append("không import được torch (SOT cần torch cu128 — chạy bằng "
-                    "/home/anlnm/UAV/MCITrack/.venv/bin/python)")
+        errs.append("không import được torch CUDA (chạy initial-setup --jetson "
+                    "hoặc rebuild image Jetson)")
         return errs
     if not torch.cuda.is_available():
-        errs.append("torch không thấy GPU nào (RTX 5080 là sm_120, cần "
-                    "torch cu128; PyTorch 2.1.2+cu121 của install.sh không thấy GPU)")
+        errs.append("torch không thấy CUDA GPU (kiểm tra NVIDIA runtime và wheel "
+                    "PyTorch tương thích JetPack/CUDA)")
     elif idx >= torch.cuda.device_count():
         errs.append(f"sot.device='{cfg.device}' nhưng máy chỉ thấy "
                     f"{torch.cuda.device_count()} GPU")
@@ -100,9 +102,39 @@ class MCITrackModel:
     def __init__(self, cfg: SotCfg):
         import torch
 
+        self._torch = torch
+        self._fp16 = bool(cfg.fp16)
+
         root = os.path.abspath(cfg.mcitrack_root)
         if root not in sys.path:
             sys.path.insert(0, root)
+
+        # Importing upstream ``lib.test.evaluation`` normally executes its
+        # benchmark-oriented __init__, which pulls training/TensorBoard/jpeg
+        # dependencies that are irrelevant to live inference. Register the
+        # directory as a package without executing that __init__, then import
+        # only the two runtime modules used below.
+        evaluation_name = "lib.test.evaluation"
+        evaluation_module = types.ModuleType(evaluation_name)
+        evaluation_module.__path__ = [os.path.join(root, "lib", "test", "evaluation")]
+        evaluation_module.__package__ = evaluation_name
+        sys.modules[evaluation_name] = evaluation_module
+
+        # Upstream normally generates this ignored local.py by running a
+        # dataset-oriented setup script. The ROS runtime only needs project and
+        # checkpoint roots, so provide those settings in memory and keep the
+        # pinned submodule pristine.
+        from lib.test.evaluation.environment import EnvSettings
+        local_module = types.ModuleType("lib.test.evaluation.local")
+
+        def _local_env_settings():
+            settings = EnvSettings()
+            settings.prj_dir = root
+            settings.save_dir = root
+            return settings
+
+        local_module.local_env_settings = _local_env_settings
+        sys.modules[local_module.__name__] = local_module
 
         _patch_torch_load(torch)   # patch toàn cục, không restore — xem docstring
 
@@ -123,17 +155,50 @@ class MCITrackModel:
                 f"kiểm prj_dir/save_dir trong file đó)")
         self._t = tr.create_tracker(params)
         self._n_layers = self._t.cfg.MODEL.NECK.N_LAYERS
+        disabled_checkpoint_modules = 0
+        if cfg.disable_grad_checkpoint:
+            # The upstream inference config still sets GRAD_CKPT=True. Those
+            # wrappers save activation memory only for backward(); under
+            # inference_mode they add dispatch/recompute bookkeeping without
+            # providing a benefit.
+            for module in self._t.network.modules():
+                if hasattr(module, "grad_ckpt"):
+                    module.grad_ckpt = False
+                    disabled_checkpoint_modules += 1
         print(f"[sot] MCITrack {cfg.config} preset={cfg.dataset_preset} "
-              f"device={cfg.device} ckpt={os.path.basename(params.checkpoint)}")
+              f"device={cfg.device} fp16={self._fp16} "
+              f"grad_ckpt_disabled={disabled_checkpoint_modules} "
+              f"ckpt={os.path.basename(params.checkpoint)}")
+
+    @contextmanager
+    def _inference_context(self):
+        """No autograd state and optional mixed precision for stored SOT state.
+
+        ``getattr`` keeps lightweight wrapper tests that construct the object
+        without calling the GPU-heavy constructor backward compatible.
+        """
+        torch = getattr(self, "_torch", None)
+        if torch is None:
+            yield
+            return
+        with torch.inference_mode():
+            with torch.autocast(
+                device_type="cuda",
+                dtype=torch.float16,
+                enabled=bool(getattr(self, "_fp16", False)),
+            ):
+                yield
 
     def initialize(self, frame_bgr: np.ndarray, bbox_xywh: Sequence[float]):
         self._t.h_state = [None] * self._n_layers
-        self._t.initialize(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB),
-                           {"init_bbox": [float(v) for v in bbox_xywh],
-                            "seq_name": "pipeline"})
+        with self._inference_context():
+            self._t.initialize(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB),
+                               {"init_bbox": [float(v) for v in bbox_xywh],
+                                "seq_name": "pipeline"})
 
     def track(self, frame_bgr: np.ndarray) -> Tuple[List[float], float]:
-        out = self._t.track(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+        with self._inference_context():
+            out = self._t.track(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
         # best_score là tensor -> phải float()
         return [float(v) for v in out["target_bbox"]], float(out["best_score"])
 
