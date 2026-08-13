@@ -27,8 +27,12 @@ Then:
         --imgsz 736 1280 --batch 16 --no-fp16
 """
 import argparse
+import fcntl
+import hashlib
+import json
 import os
 import sys
+import tempfile
 
 _CODE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _CODE_ROOT not in sys.path:
@@ -147,6 +151,101 @@ def build_engine(onnx, engine, imgsz, batch, fp16, int8, calib_dir, workspace_gb
     with open(engine, "wb") as f:
         f.write(serialized)
     print(f"[export] done -> {engine} ({serialized.nbytes / 1e6:.1f} MB)")
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _build_signature(onnx, imgsz, batch, fp16, int8):
+    import tensorrt as trt
+
+    return {
+        "schema": 1,
+        "onnx": os.path.realpath(onnx),
+        "onnx_sha256": _sha256(onnx),
+        "imgsz": [int(imgsz[0]), int(imgsz[1])],
+        "batch": int(batch),
+        "fp16": bool(fp16),
+        "int8": bool(int8),
+        "tensorrt": trt.__version__,
+    }
+
+
+def ensure_detector_engine(detector_cfg, log=print):
+    """Build a configured TensorRT plan when its portable source changed.
+
+    The engine and its ``.build.json`` manifest are written atomically. A file
+    lock prevents two ROS launches from compiling the same plan concurrently.
+    Returns ``True`` when a new plan was built.
+    """
+    policy = detector_cfg.trt_build
+    if detector_cfg.backend != "trt" or not policy.enabled:
+        return False
+
+    from .._paths import resolve
+
+    onnx = resolve(detector_cfg.primary.onnx)
+    engine = resolve(detector_cfg.primary.trt)
+    if not os.path.isfile(onnx):
+        raise FileNotFoundError(f"TensorRT source ONNX not found: {onnx}")
+
+    raw_size = detector_cfg.imgsz
+    if isinstance(raw_size, int):
+        imgsz = (raw_size, raw_size)
+    elif len(raw_size) == 2:
+        imgsz = (int(raw_size[0]), int(raw_size[1]))
+    else:
+        raise ValueError("detector.imgsz must be an int or [H, W]")
+
+    os.makedirs(os.path.dirname(engine) or ".", exist_ok=True)
+    manifest = engine + ".build.json"
+    lock_path = engine + ".lock"
+    with open(lock_path, "a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        signature = _build_signature(
+            onnx, imgsz, detector_cfg.batch, detector_cfg.fp16, policy.int8)
+        current = None
+        if os.path.isfile(engine) and os.path.isfile(manifest):
+            try:
+                with open(manifest, "r", encoding="utf-8") as f:
+                    current = json.load(f)
+            except (OSError, ValueError):
+                current = None
+        if current == signature:
+            log(f"[export] TensorRT engine is current: {engine}")
+            return False
+
+        log(f"[export] TensorRT engine missing/stale; compiling {onnx}")
+        fd, temp_engine = tempfile.mkstemp(
+            prefix=os.path.basename(engine) + ".", suffix=".tmp",
+            dir=os.path.dirname(engine) or ".")
+        os.close(fd)
+        temp_manifest = temp_engine + ".json"
+        try:
+            build_engine(
+                onnx, temp_engine, imgsz, detector_cfg.batch,
+                detector_cfg.fp16, policy.int8, policy.calib_dir,
+                policy.workspace_gb)
+            with open(temp_manifest, "w", encoding="utf-8") as f:
+                json.dump(signature, f, indent=2, sort_keys=True)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_engine, engine)
+            os.replace(temp_manifest, manifest)
+        finally:
+            for path in (temp_engine, temp_manifest):
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+        log(f"[export] TensorRT engine ready: {engine}")
+        return True
 
 
 def main():

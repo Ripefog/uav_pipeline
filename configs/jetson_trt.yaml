@@ -1,13 +1,12 @@
-# Jetson Orin preset — TensorRT FP16 engine (YOLOX-S, batch=16)
+# Jetson Orin NX 8GB preset — TensorRT FP16 engine (YOLOX-S, batch=1)
 # + GStreamer CSI/RTSP. Prereq: build the engine on the Jetson itself (engines
 # are per-device/per-arch, not portable from an x86_64 dev box), e.g.
 #   python -m uav_pipeline.scripts.export_tensorrt \
 #       --onnx weights/best_yoloxs.onnx \
-#       --engine weights/best_yoloxs_fp16.engine \
-#       --imgsz 736 1280 --batch 16 --fp16
-# batch must match export --batch exactly (yoloxs is much lighter than
-# yoloxx, so batch=16 is expected to fit on an 8GB Orin NX; untested — if it
-# OOMs, drop --batch to 8/4, no code change needed).
+#       --engine weights/best_yoloxs_b1_fp16.engine \
+#       --imgsz 736 1280 --batch 1 --fp16
+# Batch must match the static TensorRT plan exactly. Batch 1 minimizes live
+# camera latency and memory use on the Orin NX 8GB.
 
 source:
   type: gstreamer
@@ -21,15 +20,20 @@ detector:
   backend: trt
   device: ""           # TRT uses the primary GPU
   preprocess: yolox    # BGR, no /255, top-left pad (not the Ultralytics convention)
-  batch: 16            # must match the engine's fixed batch (export --batch)
+  batch: 1             # live SOT: low latency; must match export --batch
   imgsz: [736, 1280]   # must match the engine's fixed H/W (export --imgsz)
   conf: 0.25
   iou: 0.45
   fp16: true           # FP16 engine (export --fp16)
   classes_of_interest: []
   primary:
-    trt: weights/best_yoloxs_fp16.engine
+    onnx: weights/best_yoloxs.onnx
+    trt: weights/best_yoloxs_b1_fp16.engine
     names_yaml: weights/names.yaml
+  trt_build:
+    enabled: true
+    workspace_gb: 2.0
+    int8: false
 
 ocr:
   enabled: false       # TF/Keras is CPU-only on Jetson; enable only if needed

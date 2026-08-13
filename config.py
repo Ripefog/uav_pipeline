@@ -66,6 +66,20 @@ class PrimaryModelCfg:
 
 
 @dataclass
+class TensorRTBuildCfg:
+    """Target-local ONNX -> TensorRT build policy.
+
+    TensorRT plans are tied to the Jetson/TensorRT version, so deployment may
+    build the plan lazily from the portable ONNX artifact instead of checking
+    an engine into Git.
+    """
+    enabled: bool = False
+    workspace_gb: float = 2.0
+    int8: bool = False
+    calib_dir: str = ""
+
+
+@dataclass
 class DetectorCfg:
     backend: str = "openvino"                 # torch | onnx | openvino | trt | dfine
     preprocess: str = "ultralytics"            # ultralytics (RGB/255/center-pad) | yolox (BGR/0-255/top-left-pad)
@@ -77,6 +91,7 @@ class DetectorCfg:
     batch: int = 1                            # >1 = buffer N frames, run detector once (fixed-batch IR)
     classes_of_interest: List[int] = field(default_factory=list)  # [] = all
     primary: PrimaryModelCfg = field(default_factory=PrimaryModelCfg)
+    trt_build: TensorRTBuildCfg = field(default_factory=TensorRTBuildCfg)
 
 
 @dataclass
@@ -296,6 +311,19 @@ class Config:
         if not self.sot.enabled and not self.tracker.enabled:
             errs.append("cả sot.enabled và tracker.enabled đều false — "
                         "không có tracker nào chạy.")
+        tb = self.detector.trt_build
+        if tb.enabled:
+            if self.detector.backend != "trt":
+                errs.append("detector.trt_build.enabled=true chỉ dùng được với "
+                            "detector.backend='trt'.")
+            if not self.detector.primary.onnx:
+                errs.append("detector.trt_build.enabled=true cần "
+                            "detector.primary.onnx làm model nguồn.")
+            if not self.detector.primary.trt:
+                errs.append("detector.trt_build.enabled=true cần "
+                            "detector.primary.trt làm đường dẫn engine đầu ra.")
+            if tb.workspace_gb <= 0:
+                errs.append("detector.trt_build.workspace_gb phải > 0.")
         if self.sot.enabled:
             if self.sot.on_lost not in ("stop", "reacquire"):
                 errs.append(f"sot.on_lost phải là 'stop' hoặc 'reacquire', "

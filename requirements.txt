@@ -30,6 +30,7 @@ turbovec==0.8.0
 
 # ---- Jetson-only (install via JetPack SDK / apt, NOT pip where possible) ----
 # tensorrt        # matches the JetPack-bundled version
-# pycuda          # pip install pycuda (builds against system CUDA)
+# torch           # CUDA-enabled JetPack wheel; owns TRT buffers/stream
+# pycuda          # required only by the optional INT8 calibrator
 # pymavlink       # for the MAVLink controller (currently a stub)
 # rclpy           # for the ROS2 controller (currently a stub); from your ROS2 distro
