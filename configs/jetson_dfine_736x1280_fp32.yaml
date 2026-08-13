@@ -1,0 +1,63 @@
+# Jetson Orin preset — D-FINE-S 736x1280 FP32 through dfine-cpp.
+# Run from the repo root; see README.md for the one-time dfine-cpp setup.
+# Override this demo input with: --source <path> --source-type video|image_dir
+
+source:
+  type: image_dir
+  path: input/VisDrone2019-MOT-val/sequences/uav0000339_00001_v
+  loop: false
+  fps: 30
+  max_frames: 0
+
+detector:
+  backend: dfine
+  batch: 16
+  imgsz: [736, 1280]
+  conf: 0.25
+  iou: 0.45
+  fp16: false
+  # Dense COCO-80 IDs: person, bicycle, car, motorcycle, bus, truck.
+  classes_of_interest: [0, 1, 2, 3, 5, 7]
+  primary:
+    # Build on the Jetson: dfine build --model s --precision fp32 --onnx <736x1280.onnx> \
+    #   --output weights/dfine/dfine_s_736x1280_b16_fp32.engine --max-batch 16 --opt-batch 16
+    dfine: weights/dfine/dfine_s_736x1280_b16_fp32.engine
+    dfine_meta: weights/dfine/dfine_s_736x1280_b16_fp32.json
+
+ocr:
+  enabled: false
+
+tracker:
+  high_conf: 0.4
+  low_conf: 0.15
+  iou: 0.3
+  max_age: 50
+  min_hits: 3
+  emat: true
+  same_class_gate: false
+  interpolate_max_gap: 5
+  cmc: {enabled: true, method: affine, downscale: 0.5, n_features: 1000,
+        match_ratio: 0.75, ransac_thresh: 5.0, min_matches: 20}
+
+follow:
+  enabled: true
+  default_policy: highest_score_area
+  preferred_classes: [car, truck, bus, person]
+  target_area_norm: 0.12
+  deadzone_px: 12.0
+  lost_recovery_frames: 15
+  pid:
+    yaw: {kp: 0.08, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    pitch: {kp: 0.06, ki: 0.0, kd: 0.02, out_limit: 60.0}
+    forward: {kp: 0.40, ki: 0.0, kd: 0.0, out_limit: 3.0}
+    vertical: {kp: 0.0, ki: 0.0, kd: 0.0, out_limit: 2.0}
+
+controller:
+  backend: mock
+
+sinks:
+  video: {enabled: true, path: output/dfine_736x1280_fp32_pipeline.mp4,
+          codec: mp4v, fps: 30, draw: true}
+  telemetry: {enabled: true, path: output/dfine_736x1280_fp32_telemetry.jsonl,
+              csv_summary: output/dfine_736x1280_fp32_telemetry_summary.csv}
+  control_log: {enabled: true, path: output/dfine_736x1280_fp32_commands.jsonl}

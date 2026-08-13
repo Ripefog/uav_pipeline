@@ -60,12 +60,14 @@ class PrimaryModelCfg:
     openvino: str = ""
     pt: str = ""
     trt: str = ""
+    dfine: str = ""
+    dfine_meta: str = ""
     names_yaml: str = ""
 
 
 @dataclass
 class DetectorCfg:
-    backend: str = "openvino"                 # torch | onnx | openvino | trt
+    backend: str = "openvino"                 # torch | onnx | openvino | trt | dfine
     preprocess: str = "ultralytics"            # ultralytics (RGB/255/center-pad) | yolox (BGR/0-255/top-left-pad)
     imgsz: int = 640
     conf: float = 0.25
@@ -349,7 +351,8 @@ class Config:
         """Resolve the primary model path for the active backend."""
         p = self.detector.primary
         return {
-            "torch": p.pt, "onnx": p.onnx, "openvino": p.openvino, "trt": p.trt,
+            "torch": p.pt, "onnx": p.onnx, "openvino": p.openvino,
+            "trt": p.trt, "dfine": p.dfine,
         }.get(backend, "")
 
     def resolve_backend_device(self) -> str:

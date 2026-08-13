@@ -36,6 +36,28 @@ class UnifiedDetector:
     def __init__(self, cfg: DetectorCfg):
         self.cfg = cfg
         p = cfg.primary
+        self.coi = tuple(cfg.classes_of_interest)
+        self._dfine_backend = None
+        self._plate_backend = None
+
+        if cfg.backend == "dfine":
+            if not p.dfine:
+                raise ValueError(
+                    "No model path configured for backend 'dfine'. "
+                    "Set detector.primary.dfine in the config YAML.")
+            from .dfine_adapter import DfineDetectorAdapter
+            meta_path = resolve(p.dfine_meta) if p.dfine_meta else None
+            self._dfine_backend = DfineDetectorAdapter(
+                resolve(p.dfine),
+                meta_path,
+                threshold=cfg.conf,
+                classes_of_interest=self.coi,
+            )
+            # Preserve the public ``backend`` attribute used by diagnostics.
+            self.backend = self._dfine_backend
+            self.names = {}
+            return
+
         raw = {"torch": p.pt, "onnx": p.onnx,
                "openvino": p.openvino, "trt": p.trt}.get(cfg.backend, "")
         if not raw:
@@ -44,16 +66,16 @@ class UnifiedDetector:
                 f"Set detector.primary.{cfg.backend} in the config YAML.")
         model_path = resolve(raw)
         self.names = load_names(cfg.primary.names_yaml)
-        self.coi = tuple(cfg.classes_of_interest)
         self.backend = build_backend(
             cfg.backend, model_path, imgsz=cfg.imgsz, device=cfg.device, fp16=cfg.fp16,
             preprocess=cfg.preprocess)
-        self._plate_backend = None
 
     # -- primary detection --------------------------------------------------
     def detect(self, img0: np.ndarray, conf: Optional[float] = None,
                iou: Optional[float] = None) -> List[Detection]:
         conf = self.cfg.conf if conf is None else conf
+        if self._dfine_backend is not None:
+            return self._dfine_backend.detect(img0, threshold=conf)
         iou = self.cfg.iou if iou is None else iou
         inp, ratio, pad = self.backend._preprocess(img0)
         raw = self.backend._infer(inp)
@@ -68,6 +90,8 @@ class UnifiedDetector:
         then map results back per frame. Returns one Detection list per frame.
         """
         conf = self.cfg.conf if conf is None else conf
+        if self._dfine_backend is not None:
+            return self._dfine_backend.detect_batch(frames, threshold=conf)
         iou = self.cfg.iou if iou is None else iou
         inps, metas = [], []
         for f in frames:
@@ -104,3 +128,8 @@ class UnifiedDetector:
         raw = self._plate_backend._infer(inp)
         dets = postprocess(raw, self.cfg.conf, self.cfg.iou)
         return to_detections(dets, ratio, pad, self._plate_names, img0.shape[:2])
+
+    def close(self) -> None:
+        """Release optional native detector resources; safe for every backend."""
+        if self._dfine_backend is not None:
+            self._dfine_backend.close()

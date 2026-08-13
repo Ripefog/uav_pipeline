@@ -8,7 +8,7 @@ A single-frame streaming pipeline for onboard UAV inference:
                 Track.plate_text                                   Sinks (HUD/telemetry/log)
 
 Three competition pillars map onto the modules:
-    * Phát hiện  (Detect)  -> ``detect/``   (vendored YOLO backends: torch/onnx/openvino/trt)
+    * Phát hiện  (Detect)  -> ``detect/``   (YOLO backends + optional D-FINE-cpp)
     * Theo dấu   (Track)   -> ``track/``    (faithful port of pratap424/visdrone_mot)
     * Bám đuổi   (Follow)  -> ``follow/``   (PID gimbal/body follow + mock controller)
 

@@ -317,6 +317,7 @@ class Pipeline:
                       f"detections (max_gap={self.cfg.tracker.interpolate_max_gap})")
 
         self.source.release()
+        self.detector.close()
         for s in self.sinks:
             s.close()
 

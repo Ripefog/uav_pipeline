@@ -21,6 +21,9 @@ env/
 # ── Generated outputs ────────────────────────────────────────
 input/
 output/
+datasets/
+weights/deepface-home/
+weights/dfine/
 **/output/
 *_pred.jpg
 *_pred.png
@@ -29,7 +32,10 @@ output/
 _verify*.py
 
 # ── Build artifacts NOT shipped (committed: .onnx/.keras/.bin/.xml) ──
-*.engine        # TensorRT engines — build per-device via export_tensorrt.py
+# TensorRT engines — build per-device via export_tensorrt.py
+*.engine
+# Training checkpoints; export a runtime model instead
+*.ckpt
 *.tflite
 *.pb
 *.mlmodel

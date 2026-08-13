@@ -5,7 +5,7 @@ three competition pillars:
 
 | Pillar (VN)           | Module      | What it does                                                                                                                                                                                        |
 | --------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Phát hiện** | `detect/` | Real-time object detection — vendored YOLO backends (torch/onnx/openvino) + a TensorRT backend.                                                                                                    |
+| **Phát hiện** | `detect/` | Real-time object detection — vendored YOLO backends (torch/onnx/openvino/trt) plus optional D-FINE-cpp.                                                                                          |
 | **Theo dấu**   | `track/`  | Multi-object tracking with occlusion handling —**faithful port of [`pratap424/visdrone_mot`](https://github.com/pratap424/visdrone_mot)** (CMC + ByteTrack 2-stage + EMAT + interpolation). |
 | **Bám đuổi** | `follow/` | Keeps the target framed and emits UAV commands via a PID controller (gimbal/body rates). Mock controller by default; MAVLink/ROS2 stubs ready to wire.                                              |
 
@@ -38,7 +38,7 @@ the original YOLO infer scripts):
 ┌──────────────────────────────────────────────────────────────┐
 │ ① PHÁT HIỆN  detect/                                          │
 │   preprocess(letterbox) → backend._infer → postprocess(NMS)  │
-│   └─ 4 backends: openvino · onnx · torch · trt (config-chosen)│
+│   └─ openvino · onnx · torch · trt · dfine (config-chosen)    │
 │   UnifiedDetector.detect(frame)         → List[Detection]     │
 │   UnifiedDetector.detect_plates(frame)  → List[Detection] opt │
 └──────────────────────────────────────────────────────────────┘
@@ -124,6 +124,7 @@ does it. No neural ReID is added.
 | ----------------- | --------------------------------------- | ------------------------- | -------------- | ---------------------- |
 | Windows dev (x86) | `onnx` / `openvino`                 | TF/Keras (CPU)            | mock           | ✅ verified onnx + OCR |
 | Jetson Orin       | `trt` (FP16, via `export_tensorrt`) | TF/Keras (CPU, throttled) | mavlink / ros2 | Jetson-only            |
+| Jetson Orin       | `dfine` (external dfine-cpp runtime)| TF/Keras (CPU, throttled) | mavlink / ros2 | Optional               |
 
 ---
 
@@ -152,7 +153,7 @@ uav_pipeline/           ← repo root == the package (git clone produces this fo
 ├── follow/             # pid / selector / controller + controllers/{mock,mavlink,ros2}
 ├── sinks/              # HUD video / telemetry / control_log
 ├── scripts/            # run_pipeline / export_tensorrt / validate_pipeline
-└── configs/            # default / windows_onnx / windows_openvino / jetson_trt / sot_mcitrack
+└── configs/            # default / windows presets / jetson_trt / jetson_dfine / sot_mcitrack
 ```
 
 ---
@@ -202,6 +203,32 @@ python -m uav_pipeline.scripts.export_tensorrt \
 python -m uav_pipeline.scripts.run_pipeline -c uav_pipeline/configs/jetson_trt.yaml
 ```
 
+### Run the full pipeline with D-FINE on Jetson
+
+Build the pinned D-FINE runtime once:
+
+```bash
+git clone --branch v0.5.0 --depth 1 https://github.com/PogChamper/dfine-cpp.git ../dfine-cpp
+(cd ../dfine-cpp && CUDA_ARCH=87 ./build.sh)
+
+source .venv/bin/activate
+python -m pip install -e "../dfine-cpp/python[cli]"
+export DFINE_LIBRARY="$PWD/../dfine-cpp/build/libdfine.so"
+```
+
+Build the engine from a D-FINE-S slim ONNX and its adjacent JSON sidecar, then
+run the pipeline:
+
+```bash
+mkdir -p weights/dfine
+dfine build --model s --onnx /path/to/dfine_s_slim.onnx \
+  --output weights/dfine/dfine_s_b1-16_fp16.engine \
+  --max-batch 16 --opt-batch 16
+
+python scripts/run_pipeline.py -c configs/jetson_dfine.yaml \
+  --source /path/to/video.mp4 --source-type video
+```
+
 ---
 
 ## Configuration
@@ -210,7 +237,8 @@ One YAML drives everything (see `configs/default.yaml` for every key with
 comments). Highlights:
 
 - **`detector.backend`** — `openvino` (Win/x86 default), `onnx`, `torch`,
-  `trt` (Jetson). `classes_of_interest: []` keeps all classes; list ids to filter.
+  `trt`, or optional `dfine` (Jetson). `classes_of_interest: []` keeps all
+  classes; list ids to filter.
 - **`tracker`** — the visdrone_mot defaults (`high_conf=0.4`, `low_conf=0.15`,
   `iou=0.3`, `max_age=50`, `min_hits=3`). `emat: true` relaxes thresholds under
   heavy camera motion. `cmc.enabled: false` disables compensation for ablation.
